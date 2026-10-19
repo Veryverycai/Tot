@@ -6,7 +6,7 @@ Electron + 原生 JavaScript，无前端框架、无构建工具，离线可用�
 
 ## 下载
 
-最新版本：[Releases](https://github.com/Verycaicai/Tot/releases)
+最新版本：[Releases](https://github.com/Veryverycai/Tot/releases)
 
 - **Tot 1.1.3.exe** — 便携版，双击即用，无需安装
 - **Tot Setup 1.1.3.exe** — 安装版
@@ -57,4 +57,4 @@ npm run dist     # 打包（electron-builder：安装版 + 便携版）
 
 ## License
 
-[MIT](LICENSE) © 2026 Verycaicai
+[MIT](LICENSE) © 2026 Veryverycai
