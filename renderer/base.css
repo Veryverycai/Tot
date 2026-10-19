@@ -250,7 +250,7 @@ mark.tot-search.current { background: #ffb300; color: #1f2328; }
 #file-tree ul {
   list-style: none;
   margin: 0;
-  padding-left: 16px;
+  padding-left: 0; /* 子节点不向右缩进：所有层级文字左边界对齐 */
 }
 
 #file-tree > ul { padding-left: 4px; }

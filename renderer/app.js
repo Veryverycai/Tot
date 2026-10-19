@@ -600,7 +600,7 @@ function applySearch() {
     ranges.push([idx, idx + q.length]);
     idx = lower.indexOf(ql, idx + q.length);
   }
-  const matches = [];
+  const matches = ranges.map(() => []); // 每个逻辑命中一组 mark：跨节点切出的多个片段属同一命中
   let base = 0;   // 当前节点在全文中的起点
   let ri = 0;     // 下一个待切分的区间（区间互不重叠且按起点有序）
   for (const node of nodes) {
@@ -608,7 +608,7 @@ function applySearch() {
     const end = base + text.length;
     const segs = [];
     while (ri < ranges.length && ranges[ri][0] < end) {
-      segs.push([Math.max(ranges[ri][0] - base, 0), Math.min(ranges[ri][1] - base, text.length)]);
+      segs.push([ri, Math.max(ranges[ri][0] - base, 0), Math.min(ranges[ri][1] - base, text.length)]);
       if (ranges[ri][1] > end) break; // 区间跨到下一个文本节点，剩余部分下个节点继续
       ri++;
     }
@@ -616,13 +616,13 @@ function applySearch() {
     if (!segs.length) continue;
     const frag = document.createDocumentFragment();
     let pos = 0;
-    for (const [s, e] of segs) {
+    for (const [rangeIdx, s, e] of segs) {
       if (s > pos) frag.append(document.createTextNode(text.slice(pos, s)));
       const mark = document.createElement('mark');
       mark.className = 'tot-search';
       mark.textContent = text.slice(s, e);
       frag.append(mark);
-      matches.push(mark);
+      matches[rangeIdx].push(mark);
       pos = e;
     }
     if (pos < text.length) frag.append(document.createTextNode(text.slice(pos)));
@@ -637,8 +637,8 @@ function applySearch() {
 function updateSearchUI() {
   const { matches, current } = searchState;
   $('#search-count').textContent = matches.length ? `${current + 1}/${matches.length}` : '0/0';
-  matches.forEach((m, i) => m.classList.toggle('current', i === current));
-  if (matches[current]) matches[current].scrollIntoView({ block: 'center' });
+  matches.forEach((group, i) => group.forEach((m) => m.classList.toggle('current', i === current)));
+  if (matches[current] && matches[current].length) matches[current][0].scrollIntoView({ block: 'center' });
 }
 
 function moveSearch(dir) {

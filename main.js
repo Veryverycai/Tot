@@ -464,6 +464,7 @@ async function createWindow() {
           const check = `JSON.stringify({
             treeFiles: [...document.querySelectorAll('#file-tree a')].map((a) => a.textContent),
             treeDirs: [...document.querySelectorAll('#file-tree summary')].map((s) => s.textContent),
+            treeIndents: [...document.querySelectorAll('#file-tree ul')].map((u) => getComputedStyle(u).paddingLeft),
             active: document.querySelector('#file-tree a.active')?.textContent ?? null,
             headings: [...document.querySelectorAll('#viewer h1,h2,h3,h4,h5,h6')].map((h) => h.id + ':' + h.tagName + ':' + h.textContent.slice(0, 12)),
             table: !!document.querySelector('#viewer table'),
@@ -723,6 +724,42 @@ async function createWindow() {
           await new Promise((r) => setTimeout(r, 200));
           console.log('[dev:search4]', await win.webContents.executeJavaScript(
             `JSON.stringify({ barShown: !document.querySelector('#searchbar').hidden, inputCleared: document.querySelector('#search-input').value === '', marks: document.querySelectorAll('#edit-viewer mark.tot-search').length })`,
+          ));
+          // search5: 跨节点命中的计数与上下跳转按完整命中（一个命中跨边界切成多个 mark 仍算一个）
+          await win.webContents.executeJavaScript(`document.querySelector('#edit-toggle').click()`);
+          await new Promise((r) => setTimeout(r, 500));
+          await win.webContents.executeJavaScript(
+            `{ const si = document.querySelector('#search-input');
+               si.value = ${JSON.stringify(process.env.TOT_SEARCH_QUERY5 || '加粗测试')};
+               si.dispatchEvent(new Event('input', { bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:search5]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              marks: document.querySelectorAll('#viewer mark.tot-search').length,
+              count: document.querySelector('#search-count').textContent,
+              currentIdx: [...document.querySelectorAll('#viewer mark.tot-search')].findIndex((m) => m.classList.contains('current')),
+              currentMarks: document.querySelectorAll('#viewer mark.tot-search.current').length,
+            })`,
+          ));
+          // search5b: 下一个 → 跳到第二个完整命中（而不是同一命中的下一个片段）
+          await win.webContents.executeJavaScript(`document.querySelector('#search-next').click()`);
+          await new Promise((r) => setTimeout(r, 200));
+          console.log('[dev:search5b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              count: document.querySelector('#search-count').textContent,
+              currentIdx: [...document.querySelectorAll('#viewer mark.tot-search')].findIndex((m) => m.classList.contains('current')),
+              currentMarks: document.querySelectorAll('#viewer mark.tot-search.current').length,
+            })`,
+          ));
+          // search5c: 再下一个 → 回绕到第一个完整命中
+          await win.webContents.executeJavaScript(`document.querySelector('#search-next').click()`);
+          await new Promise((r) => setTimeout(r, 200));
+          console.log('[dev:search5c]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              count: document.querySelector('#search-count').textContent,
+              currentIdx: [...document.querySelectorAll('#viewer mark.tot-search')].findIndex((m) => m.classList.contains('current')),
+            })`,
           ));
         }
         if (process.env.TOT_DROP) {

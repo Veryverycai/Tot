@@ -130,12 +130,14 @@ md-browser/
 - 文件关联双击打开（Windows「打开方式」关联 .md 后双击）：argv 传入的 .md 路径启动即打开（did-finish-load 排空 startupMdPaths）；单实例锁——已运行实例经 second-instance 接收路径、恢复并聚焦窗口、打开文件；ELECTRON_RUN_AS_NODE 兜底重启透传 argv
 - 验证：[dev:panels1-6] 状态断言（互斥/聚焦/dirHidden/pathHidden/treeDirs）+ 亮暗截图；[dev:drag1-3] 侧栏宽度 clamp + 持久化；[dev:start] 盘符树；[dev:recent] 最近打开菜单与 config 一致；[dev:recent-missing] 被删文件自动出索引 + 提示；[dev:argv1] argv 启动打开；[dev:argv2] second-instance 转交打开
 
-## 1.1.2 修正（搜索匹配 / 常显搜索条 / 拖入打开）
+## 1.1.2 修正（搜索匹配 / 常显搜索条 / 拖入打开 / 目录树不缩进）
 
 - 搜索匹配跨节点：文本节点拼接成全文查找，命中区间按字符偏移回映到各文本节点切分——跨内联格式（**加粗**边界）与代码高亮 span 边界的词可匹配（原实现按单个文本节点 indexOf，跨边界即 0 匹配）；空白文本节点保留参与拼接（相邻匹配需要）
+- 搜索命中归组：一个逻辑命中跨节点切出的多个 mark 片段归为同一组——计数与上下跳转按完整命中走（原实现每个片段算一个命中，`log('测试')` 显示 1/4 且 ↓ 在片段间逐字移动）；current 高亮覆盖该命中的全部片段
 - 搜索条常显顶栏：[保存状态/编辑/保存/搜索条] 一组居左，渲染风格选择居最右；Ctrl+F 只聚焦搜索框，Esc / × 清除查询与高亮（搜索条不再隐藏，编辑保存后保持）
 - 拖入打开：document 级 dragover/drop 拦截默认导航（Chromium 默认把窗口导航到被拖的文件，顶掉整个应用界面）→ webUtils.getPathForFile 取路径（Electron 32+ File.path 已移除）→ open-dropped IPC（仅收 .md/.markdown）→ openByPath 全流程（放行父目录 + 最近打开 + 打开标签页）
-- 验证：[dev:search1-4] 跨边界查询断言 + 顶栏布局断言（topbarKids/controlsKids/barAfterSave/selectAtRight）；[dev:drop1-3] 合成 drop 拦截默认导航 / 目录外真实路径打开 / 非 md 拒绝
+- 目录树左对齐：子节点不再向右缩进（#file-tree ul 的 padding-left 16px → 0，根级 4px 保留）——所有层级文字左边界对齐，层级只靠展开三角区分
+- 验证：[dev:search1-4] 跨边界查询断言 + 顶栏布局断言（topbarKids/controlsKids/barAfterSave/selectAtRight）；[dev:search5-5c] 跨节点命中归组断言（marks=4 片段 / count=1/2、↓ 跳第二个完整命中的首片段、再 ↓ 回绕）；[dev:drop1-3] 合成 drop 拦截默认导航 / 目录外真实路径打开 / 非 md 拒绝；[dev:check1] treeIndents 断言（根 4px / 嵌套全 0px）
 
 ## 已知限制（1.1）
 
