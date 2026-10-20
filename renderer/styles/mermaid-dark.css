@@ -1,0 +1,84 @@
+/* ===== Mermaid 图表 wrapper 与就地编辑器（暗色版，7 套暗色风格共用） ===== */
+
+body[class] .markdown-body .mermaid-wrapper {
+  margin: 0 0 1em;
+  padding: 14px 16px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #161b22;
+  cursor: pointer;
+  text-align: center;
+  overflow-x: auto;
+}
+
+body[class] .markdown-body .mermaid-wrapper:hover { border-color: #58a6ff; }
+
+body[class] .markdown-body .mermaid-wrapper svg { max-width: 100%; height: auto; }
+
+/* 渲染失败的错误态：仍可点击编辑 */
+body[class] .markdown-body .mermaid-wrapper.mermaid-error {
+  text-align: left;
+  padding: 10px 14px;
+  color: #f85149;
+  font: 12px/1.5 Consolas, "Courier New", monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ---- 就地编辑器 ---- */
+
+body[class] .markdown-body .mermaid-editor { text-align: left; }
+
+body[class] .markdown-body .mermaid-editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #8b949e;
+}
+
+body[class] .markdown-body .mermaid-editor-bar span { flex: 1; }
+
+body[class] .markdown-body .mermaid-editor-bar button {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #21262d;
+  color: #c9d1d9;
+  cursor: pointer;
+  font: inherit;
+}
+
+body[class] .markdown-body .mermaid-editor-bar button:hover { background: #30363d; }
+
+body[class] .markdown-body .mermaid-editor-bar .mermaid-apply {
+  background: #238636;
+  border-color: #238636;
+  color: #fff;
+}
+
+body[class] .markdown-body .mermaid-editor-input {
+  display: block;
+  width: 100%;
+  min-height: 10em;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #c9d1d9;
+  font: 13px/1.6 Consolas, "Courier New", monospace;
+  box-sizing: border-box;
+}
+
+body[class] .markdown-body .mermaid-editor-preview { margin-top: 10px; text-align: center; }
+
+body[class] .markdown-body .mermaid-editor-preview svg { max-width: 100%; height: auto; }
+
+body[class] .markdown-body .mermaid-editor-preview.error {
+  color: #f85149;
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+}

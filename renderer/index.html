@@ -11,7 +11,6 @@
   <header id="topbar">
     <div id="controls">
       <span id="save-status"></span>
-      <button id="edit-toggle" disabled title="编辑当前文档">编辑</button>
       <button id="save-btn" disabled title="保存当前文档 (Ctrl+S)">保存</button>
       <div id="searchbar">
         <input id="search-input" type="text" placeholder="查找（大小写不敏感）">
@@ -46,10 +45,6 @@
         <div id="preview-scroll">
           <div id="viewer" class="markdown-body"></div>
         </div>
-        <div id="edit-pane" hidden>
-          <textarea id="editor" spellcheck="false" placeholder="在这里编辑 Markdown 源码"></textarea>
-          <div id="edit-viewer" class="markdown-body"></div>
-        </div>
       </div>
       <div id="close-confirm" hidden>
         <span>未保存的更改将丢失</span>
@@ -65,6 +60,9 @@
 
   <script src="../lib/highlight.min.js"></script>
   <script src="../lib/marked.umd.js"></script>
+  <script src="../lib/mermaid.min.js"></script>
+  <script src="../lib/turndown.min.js"></script>
+  <script src="../lib/turndown-plugin-gfm.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

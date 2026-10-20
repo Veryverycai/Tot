@@ -32,7 +32,6 @@ body {
 
 #controls { display: flex; align-items: center; gap: 10px; }
 
-#edit-toggle,
 #save-btn {
   padding: 6px 14px;
   border: 1px solid #d1d9e0;
@@ -43,12 +42,9 @@ body {
   font: inherit;
 }
 
-#edit-toggle:hover,
 #save-btn:hover { background: #eef1f4; }
 
-#edit-toggle:disabled,
 #save-btn:disabled { opacity: 0.5; cursor: default; }
-#edit-toggle:disabled:hover,
 #save-btn:disabled:hover { background: #fff; }
 
 #save-status { font-size: 13px; color: #2da44e; }
@@ -180,35 +176,80 @@ mark.tot-search.current { background: #ffb300; color: #1f2328; }
 
 .tab-close:hover { background: #d1d9e0; color: #1f2328; }
 
-/* ---- 内容面板（预览 / 编辑双栏） ---- */
+/* ---- 内容面板（预览即编辑：单一预览界面） ---- */
 
 #panes { flex: 1; display: flex; min-height: 0; overflow: hidden; }
 
 #preview-scroll { flex: 1; overflow-y: auto; min-width: 0; }
 
-#edit-pane { flex: 1; display: flex; min-height: 0; }
+/* ---- 块级就地编辑（富文本） ---- */
 
-#editor {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  border-right: 1px solid #d1d9e0;
-  padding: 24px;
-  font: 14px/1.6 Consolas, "Courier New", monospace;
-  resize: none;
-  outline: none;
+/* 可编辑块悬停轻提示（发现「点块即改」）；mermaid 图表自带 hover 边框 */
+#viewer [data-block]:not(.mermaid-wrapper):hover {
+  outline: 1px dashed rgba(128, 128, 128, 0.35);
+  outline-offset: 2px;
+}
+
+#viewer .block-editing {
+  position: relative;
+  outline: 1px solid #0969da;
+  outline-offset: 2px;
+  cursor: text;
+}
+
+#viewer .block-editing:empty { min-height: 1.5em; }
+#viewer .block-editing .callout-title { cursor: default; }
+
+.block-editor-bar {
+  position: absolute;
+  top: -2.4em;
+  left: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
   background: #fff;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font: 13px/1.4 sans-serif;
+}
+
+.block-editor-bar button {
+  min-width: 24px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
   color: #1f2328;
 }
 
-#edit-viewer {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  max-width: 920px;
-  margin: 0 auto;
-  padding: 32px 48px 96px;
+.block-editor-bar button:hover { background: #eef1f4; border-color: #d1d9e0; }
+
+.block-editor-bar .block-apply {
+  border-color: #d1d9e0;
+  background: #f6f8fa;
 }
+
+.block-editor-bar .block-format {
+  max-width: 76px;
+  padding: 2px 4px;
+  border: 1px solid #d1d9e0;
+  border-radius: 4px;
+  font: inherit;
+}
+
+/* 代码围栏就地编辑：编辑器填充整个 pre */
+#viewer pre.code-editing {
+  padding: 0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+#viewer pre.code-editing:hover { outline: none; }
 
 /* ---- 关闭确认浮条 ---- */
 

@@ -472,12 +472,29 @@ async function createWindow() {
             hljsSpans: document.querySelectorAll('#viewer pre code .hljs-keyword, #viewer pre code .hljs-string, #viewer pre code .hljs-comment').length,
             callouts: [...document.querySelectorAll('#viewer .callout')].map((c) => c.className),
             calloutTitles: [...document.querySelectorAll('#viewer .callout-title')].map((t) => t.textContent),
+            delCheck: (() => {
+              const tr = [...document.querySelectorAll('#viewer tr')].find((t) => t.textContent.includes('两段接力'));
+              if (!tr) return null;
+              return { rangeLiteral: tr.textContent.includes('写阶段 1~6，上电侧'), delCount: tr.querySelectorAll('del').length, delTexts: [...tr.querySelectorAll('del')].map((d) => d.textContent) };
+            })(),
             imgSrc: document.querySelector('#viewer img')?.getAttribute('src') ?? null,
             imgLoaded: (() => { const i = document.querySelector('#viewer img'); return i ? i.naturalWidth > 0 : null; })(),
             outline: [...document.querySelectorAll('#outline a')].map((a) => a.getAttribute('href')),
             outlineActive: document.querySelector('#outline a.active')?.getAttribute('href') ?? null,
             tabs: document.querySelectorAll('.tab').length,
             activeTab: document.querySelector('.tab.active .tab-name')?.textContent ?? null,
+            saveDisabled: document.querySelector('#save-btn').disabled,
+            turndownLoaded: typeof window.TurndownService !== 'undefined' && typeof window.turndownPluginGfm !== 'undefined',
+            turndownRoundtrip: (() => {
+              // 与应用内 turndown 配置保持一致（emDelimiter + 删除线双波浪线覆盖），防配置漂移
+              const td = new TurndownService({ headingStyle: 'atx', bulletListMarker: '-', codeBlockStyle: 'fenced', emDelimiter: '*' });
+              td.use(turndownPluginGfm.gfm);
+              td.addRule('strikethrough', { filter: 'del', replacement: (content) => '~~' + content + '~~' });
+              const div = document.createElement('div');
+              div.innerHTML = '<h2>标题 <em>斜</em></h2><p>行内 <code>c</code> 与 <strong>粗</strong></p><table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td><del>x</del></td></tr></tbody></table>';
+              const md = td.turndown(div);
+              return { md, delOk: md.includes('~~x~~'), emOk: md.includes('*斜*'), tableOk: md.includes('| --- |') };
+            })(),
             style: document.body.className + '/' + (localStorage.getItem('tot-style') || 'none'),
             panelLabels: [...document.querySelectorAll('.panel-header span')].map((s) => s.textContent),
             panelCollapsed: [document.querySelector('#sidebar').classList.contains('tree-collapsed'), document.querySelector('#sidebar').classList.contains('outline-collapsed')],
@@ -523,7 +540,7 @@ async function createWindow() {
                     stored: localStorage.getItem('tot-style'),
                     viewerBg: cs.backgroundColor,
                     viewerColor: cs.color,
-                    shellBg: [getComputedStyle(document.body).backgroundColor, getComputedStyle(document.querySelector('#topbar')).backgroundColor, getComputedStyle(document.querySelector('#editor')).backgroundColor, getComputedStyle(document.querySelector('#tabbar')).backgroundColor],
+                    shellBg: [getComputedStyle(document.body).backgroundColor, getComputedStyle(document.querySelector('#topbar')).backgroundColor, getComputedStyle(document.querySelector('#viewer')).backgroundColor, getComputedStyle(document.querySelector('#tabbar')).backgroundColor],
                     preStyle: (() => { const p = getComputedStyle(document.querySelector('#viewer pre')); return { bg: p.backgroundColor, border: p.borderTopColor }; })(),
                     calloutStyle: (() => { const c = getComputedStyle(document.querySelector('#viewer .callout-note')); const t = getComputedStyle(document.querySelector('#viewer .callout-note .callout-title')); return { bg: c.backgroundColor, border: c.borderLeftColor, title: t.color }; })(),
                   }));
@@ -582,13 +599,18 @@ async function createWindow() {
               panesHidden: document.querySelector('#panes').hidden,
             })`,
           ));
-          // tabs5/6: dirty 关闭确认——编辑改字 → 关闭弹确认条 → 取消 → 再关并丢弃
+          // tabs5/6: dirty 关闭确认——块级就地编辑改字 → 关闭弹确认条 → 取消 → 再关并丢弃
           await win.webContents.executeJavaScript(`[...document.querySelectorAll('#file-tree a')].find((a) => a.textContent === 'README.md')?.click()`);
           await new Promise((r) => setTimeout(r, 500));
-          await win.webContents.executeJavaScript(`document.querySelector('#edit-toggle').click()`);
-          await new Promise((r) => setTimeout(r, 300));
+          await win.webContents.executeJavaScript(`[...document.querySelectorAll('#viewer p[data-block]')][0].click()`);
+          await new Promise((r) => setTimeout(r, 400));
           await win.webContents.executeJavaScript(
-            `{ const ed = document.querySelector('#editor'); ed.value = ed.value + 'x'; ed.dispatchEvent(new Event('input', { bubbles: true })); }`,
+            `{ const p = document.querySelector('#viewer p.block-editing');
+               p.focus();
+               const s = getSelection(); const r = document.createRange();
+               r.selectNodeContents(p); r.collapse(false);
+               s.removeAllRanges(); s.addRange(r);
+               document.execCommand('insertText', false, 'x'); }`,
           );
           await new Promise((r) => setTimeout(r, 200));
           await win.webContents.executeJavaScript(`document.querySelector('.tab-close').click()`);
@@ -614,72 +636,288 @@ async function createWindow() {
         }
         if (process.env.TOT_EDIT) {
           const editFile = path.join(path.resolve(process.env.TOT_OPEN_DIR), process.env.TOT_OPEN_FILE || 'README.md');
+          const before = await fs.readFile(editFile, 'utf8'); // 基线（此时磁盘尚未被本轮修改），最后还原用
           await new Promise((r) => setTimeout(r, 3000)); // 等树懒加载定位完成
           // 自包含：确保文件已打开（与 TOT_TABS 组合运行时可能已被全部关闭）
           await win.webContents.executeJavaScript(
             `[...document.querySelectorAll('#file-tree a')].find((a) => a.title === ${JSON.stringify(editFile)})?.click()`,
           );
           await new Promise((r) => setTimeout(r, 800));
-          // edit0: 预览模式下保存按钮变灰不可操作
+          // edit0: 刚打开的文档不脏 → 保存按钮禁用（预览即编辑：无模式切换，按钮仅随 dirty 启停）
           console.log('[dev:edit0]', await win.webContents.executeJavaScript(
             `JSON.stringify({ saveDisabled: document.querySelector('#save-btn').disabled })`,
           ));
-          // edit1: 切到编辑模式
-          await win.webContents.executeJavaScript(`document.querySelector('#edit-toggle').click()`);
+          // edit1: 点击段落块 → 富文本就地编辑（contenteditable + 浮动工具条）
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')][0].click()`,
+          );
           await new Promise((r) => setTimeout(r, 400));
           console.log('[dev:edit1]', await win.webContents.executeJavaScript(
             `JSON.stringify({
-              editPane: !document.querySelector('#edit-pane').hidden,
-              previewHidden: document.querySelector('#preview-scroll').hidden,
-              editorHasText: document.querySelector('#editor').value.length > 0,
-              toggleLabel: document.querySelector('#edit-toggle').textContent,
-              saveDisabled: document.querySelector('#save-btn').disabled,
-              editViewerH1: document.querySelector('#edit-viewer h1')?.textContent?.slice(0, 8) ?? null,
+              blockEditing: document.querySelector('#viewer p.block-editing') !== null,
+              contentEditable: [...document.querySelectorAll('#viewer p[data-block]')][0].contentEditable === 'true',
+              bar: !!document.querySelector('#viewer .block-editor-bar'),
+              barCmds: [...document.querySelectorAll('#viewer .block-editor-bar [data-cmd]')].map((b) => b.dataset.cmd),
+              formats: [...document.querySelectorAll('#viewer .block-editor-bar .block-format option')].map((o) => o.value),
+              idx: document.querySelector('#viewer p.block-editing')?.dataset.block ?? null,
             })`,
           ));
-          // edit2: 插入标记文本 → dirty 出现
+          // edit2: 键入文本 → 工具条「应用」→ dirty + 编辑器关闭
           await win.webContents.executeJavaScript(
-            `{ const ed = document.querySelector('#editor');
-               ed.value = ed.value + '\\n\\n**TOT编辑测试段落**';
-               ed.dispatchEvent(new Event('input', { bubbles: true })); }`,
+            `{ const p = document.querySelector('#viewer p.block-editing');
+               p.focus();
+               const s = getSelection();
+               const r = document.createRange();
+               r.selectNodeContents(p); r.collapse(false);
+               s.removeAllRanges(); s.addRange(r);
+               document.execCommand('insertText', false, 'TOT编辑段落');
+               p.querySelector('.block-apply').click(); }`,
           );
-          await new Promise((r) => setTimeout(r, 200));
-          console.log('[dev:edit2]', await win.webContents.executeJavaScript(
-            `JSON.stringify({ dirty: !document.querySelector('.tab-dirty').hidden })`,
-          ));
-          // edit3: debounce 后右栏渲染出标记
           await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit2]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              dirty: !document.querySelector('.tab.active .tab-dirty').hidden,
+              editorGone: !document.querySelector('#viewer p.block-editing'),
+              saveEnabled: !document.querySelector('#save-btn').disabled,
+            })`,
+          ));
+          // edit3: 应用后整页重渲染出标记
           console.log('[dev:edit3]', await win.webContents.executeJavaScript(
-            `JSON.stringify({ rendered: document.querySelector('#edit-viewer').textContent.includes('TOT编辑测试段落') })`,
+            `JSON.stringify({ rendered: document.querySelector('#viewer').textContent.includes('TOT编辑段落') })`,
           ));
           // edit4/5: 点保存按钮保存，断言磁盘真的被改
-          const before = await fs.readFile(editFile, 'utf8');
           await win.webContents.executeJavaScript(`document.querySelector('#save-btn').click()`);
           await new Promise((r) => setTimeout(r, 700));
-          const after = await fs.readFile(editFile, 'utf8');
+          const after1 = await fs.readFile(editFile, 'utf8');
           console.log('[dev:edit4]', JSON.stringify({
-            diskChanged: after !== before,
-            dirtyGone: await win.webContents.executeJavaScript(`document.querySelector('.tab-dirty').hidden`),
+            diskChanged: after1 !== before,
+            dirtyGone: await win.webContents.executeJavaScript(`document.querySelector('.tab.active .tab-dirty').hidden`),
           }));
           console.log('[dev:edit5]', JSON.stringify({
-            diskHasMarker: after.includes('TOT编辑测试段落'),
+            diskHasMarker: after1.includes('TOT编辑段落'),
             status: await win.webContents.executeJavaScript(`document.querySelector('#save-status').textContent`),
           }));
-          // edit5b: 切回预览模式 → 保存按钮变灰不可操作
-          await win.webContents.executeJavaScript(`document.querySelector('#edit-toggle').click()`);
-          await new Promise((r) => setTimeout(r, 400));
+          // edit5b: 保存后按钮回到禁用
           console.log('[dev:edit5b]', await win.webContents.executeJavaScript(
-            `JSON.stringify({ toggleLabel: document.querySelector('#edit-toggle').textContent, saveDisabled: document.querySelector('#save-btn').disabled })`,
+            `JSON.stringify({ saveDisabled: document.querySelector('#save-btn').disabled })`,
           ));
-          // edit6: 经 write-file IPC 恢复原内容，测试数据零污染
+          // edit6: 工具条「加粗」——选中文本 → execCommand 包 <b> → 应用 → 重渲染出 **粗体**
+          await win.webContents.executeJavaScript(
+            `{ const p = [...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.includes('加粗测试段落'));
+               p.click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const p = document.querySelector('#viewer p.block-editing');
+               const s = getSelection(); const r = document.createRange();
+               // 工具条被 prepend 在块首：正文第一个文本节点在工具条之后
+               r.selectNodeContents([...p.childNodes].find((n) => n.nodeType === 3));
+               s.removeAllRanges(); s.addRange(r);
+               p.querySelector('[data-cmd="bold"]').click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 200));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer p.block-editing .block-apply').click()`);
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit6]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              bolded: [...document.querySelectorAll('#viewer p strong')].some((x) => x.textContent === '这是加粗'),
+              noAsteriskLeak: !document.querySelector('#viewer').textContent.includes('****'),
+            })`,
+          ));
+          // edit7: Esc 取消 —— 修改被丢弃、块内容精确还原
+          await win.webContents.executeJavaScript(
+            `{ const p = [...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.startsWith('第二段'));
+               p.click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const p = document.querySelector('#viewer p.block-editing');
+               p.focus();
+               const s = getSelection(); const r = document.createRange();
+               r.selectNodeContents(p); r.collapse(false);
+               s.removeAllRanges(); s.addRange(r);
+               document.execCommand('insertText', false, 'Y');
+               p.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit7]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              editorGone: !document.querySelector('#viewer p.block-editing'),
+              restored: [...document.querySelectorAll('#viewer p[data-block]')].some((x) => x.textContent === '第二段：测试出现第二次。'),
+            })`,
+          ));
+          // edit8: 失焦（焦点移出块）即应用
+          await win.webContents.executeJavaScript(
+            `{ const p = [...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.startsWith('第二段'));
+               p.click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const p = document.querySelector('#viewer p.block-editing');
+               p.focus();
+               const s = getSelection(); const r = document.createRange();
+               r.selectNodeContents(p); r.collapse(false);
+               s.removeAllRanges(); s.addRange(r);
+               document.execCommand('insertText', false, 'X');
+               p.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit8]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              applied: document.querySelector('#viewer').textContent.includes('X第二段') || document.querySelector('#viewer').textContent.includes('第二段：测试出现第二次。X'),
+              editorGone: !document.querySelector('#viewer p.block-editing'),
+              dirty: !document.querySelector('.tab.active .tab-dirty').hidden,
+            })`,
+          ));
+          // edit9: 标注块（> [!NOTE]）—— 标题行不参与编辑，正文修改后标注结构保留
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .callout').click()`);
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const bq = document.querySelector('#viewer .callout.block-editing');
+               const p = bq.querySelector(':scope > p');
+               p.textContent = '标注块已改';
+               bq.querySelector('.block-apply').click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit9]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              calloutKept: !!document.querySelector('#viewer .callout'),
+              titleKept: !!document.querySelector('#viewer .callout-title'),
+              textChanged: document.querySelector('#viewer .callout')?.textContent.includes('标注块已改') ?? false,
+            })`,
+          ));
+          // edit10: 表格 —— 单元格文本修改 → 序列化回管道表格
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer table[data-block]').click()`);
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const t = document.querySelector('#viewer table.block-editing');
+               [...t.querySelectorAll('td')].find((td) => td.textContent === '值').textContent = '新值';
+               t.querySelector('.block-apply').click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit10]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              cellChanged: [...document.querySelectorAll('#viewer table')].some((t) => [...t.querySelectorAll('td')].some((td) => td.textContent === '新值')),
+              tableKept: document.querySelectorAll('#viewer table').length === 2,
+            })`,
+          ));
+          // edit10b: 删除线所在表格整体重序列化 —— ~~双波浪线~~ 必须保持（gfm 插件单波浪线规则已被覆盖）
+          await win.webContents.executeJavaScript(
+            `{ const t = [...document.querySelectorAll('#viewer table[data-block]')].find((x) => x.textContent.includes('两段接力'));
+               t.click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const t = document.querySelector('#viewer table.block-editing');
+               [...t.querySelectorAll('th')].find((th) => th.textContent === '说明').textContent = '说明改';
+               t.querySelector('.block-apply').click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit10b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              thChanged: [...document.querySelectorAll('#viewer table')].some((t) => [...t.querySelectorAll('th')].some((th) => th.textContent === '说明改')),
+              delStillRendered: [...document.querySelectorAll('#viewer table')].some((t) => t.querySelector('del')?.textContent === '这是删除线'),
+            })`,
+          ));
+          // edit11: 代码围栏 —— 点 pre 打开源码编辑（textarea 载入完整围栏含开闭标记）
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer pre[data-block]').click()`);
+          await new Promise((r) => setTimeout(r, 400));
+          console.log('[dev:edit11]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              codeEditing: document.querySelector('#viewer pre.code-editing') !== null,
+              hasFenceRaw: document.querySelector('#viewer pre.code-editing textarea')?.value === String.fromCharCode(96, 96, 96) + "js\\nconsole.log('测试');\\n" + String.fromCharCode(96, 96, 96),
+            })`,
+          ));
+          // edit11b: 改源码 → 应用 → 重渲染出高亮代码
+          await win.webContents.executeJavaScript(
+            `{ const t = document.querySelector('#viewer pre.code-editing textarea');
+               t.value = String.fromCharCode(96, 96, 96) + "js\\nconsole.log('新代码')\\n" + String.fromCharCode(96, 96, 96);
+               document.querySelector('#viewer pre.code-editing .mermaid-apply').click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit11b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              codeChanged: document.querySelector('#viewer pre code')?.textContent.includes('新代码') ?? false,
+              editorGone: !document.querySelector('#viewer pre.code-editing'),
+              dirty: !document.querySelector('.tab.active .tab-dirty').hidden,
+            })`,
+          ));
+          // edit12: 粘贴按纯文本（HTML 剪贴板内容被丢弃）→ Esc 取消
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')][0].click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const p = document.querySelector('#viewer p.block-editing');
+               p.focus();
+               const s = getSelection(); const r = document.createRange();
+               r.selectNodeContents(p); r.collapse(false);
+               s.removeAllRanges(); s.addRange(r);
+               const dt = new DataTransfer();
+               dt.setData('text/html', '<b>恶意</b>');
+               dt.setData('text/plain', '纯文本粘贴');
+               p.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit12]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              plainInserted: document.querySelector('#viewer p.block-editing')?.textContent.includes('纯文本粘贴') ?? false,
+              htmlIgnored: !document.querySelector('#viewer p.block-editing')?.textContent.includes('恶意') ?? false,
+            })`,
+          ));
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#viewer p.block-editing')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          // edit13: 图片 —— 编辑块里的 img 序列化回原始相对路径（origSrc 还原）
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.startsWith('波浪号')).click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const p = document.querySelector('#viewer p.block-editing');
+               const apply = p.querySelector('.block-apply'); // innerHTML 赋值会毁掉工具条，先取按钮引用
+               p.innerHTML = '图片：<img src="mdfile://local/x/a.png" data-orig-src="a.png" alt="图">';
+               apply.click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 600));
+          console.log('[dev:edit13]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              imgShown: !!document.querySelector('#viewer img'),
+              srcResolved: document.querySelector('#viewer img')?.src.startsWith('mdfile://') ?? false,
+              origKept: document.querySelector('#viewer img')?.dataset.origSrc ?? null,
+            })`,
+          ));
+          // edit14: 最终保存 —— 磁盘含全部修改、无被取消的修改、换行风格保持（LF）
+          await win.webContents.executeJavaScript(`document.querySelector('#save-btn').click()`);
+          await new Promise((r) => setTimeout(r, 700));
+          const final = await fs.readFile(editFile, 'utf8');
+          console.log('[dev:edit14]', JSON.stringify({
+            hasRichMarker: final.includes('TOT编辑段落'),
+            hasBold: final.includes('**这是加粗**'),
+            hasBlur: final.includes('X第二段') || final.includes('测试出现第二次。X'),
+            hasCalloutPrefix: final.includes('> [!NOTE]'),
+            hasCalloutText: final.includes('标注块已改'),
+            hasTableCell: final.includes('| 新值 |'),
+            hasTh: final.includes('| 说明改 |'),
+            delTildeKept: final.includes('~~这是删除线~~'),
+            hasCode: final.includes('新代码'),
+            hasImg: final.includes('![图](a.png)'),
+            hasOldCode: !final.includes("console.log('测试')"),
+            pasteCancelled: !final.includes('纯文本粘贴'),
+            escCancelled: !final.includes('Y第二段'),
+            lfKept: !final.includes('\r'),
+            dirtyGone: await win.webContents.executeJavaScript(`document.querySelector('.tab.active .tab-dirty').hidden`),
+          }));
+          // edit15: 经 write-file IPC 恢复原内容，测试数据零污染
           await win.webContents.executeJavaScript(
             `window.tot.writeFile(${JSON.stringify(editFile)}, ${JSON.stringify(before)})`,
           );
           await new Promise((r) => setTimeout(r, 300));
           const restored = await fs.readFile(editFile, 'utf8');
-          console.log('[dev:edit6]', JSON.stringify({ restored: restored === before }));
-          // edit7: 越界路径被拒
-          console.log('[dev:edit7]', JSON.stringify({
+          console.log('[dev:edit15]', JSON.stringify({ restored: restored === before }));
+          // edit16: 越界路径被拒
+          console.log('[dev:edit16]', JSON.stringify({
             result: await win.webContents.executeJavaScript(
               `window.tot.writeFile('C:/Windows/System32/tot-test.txt', 'x').then(() => 'ok', (e) => 'err')`,
             ),
@@ -713,21 +951,37 @@ async function createWindow() {
           console.log('[dev:search2]', await win.webContents.executeJavaScript(
             `JSON.stringify({ currentIdx: [...document.querySelectorAll('#viewer mark.tot-search')].findIndex((m) => m.classList.contains('current')) })`,
           ));
-          // search3: 编辑模式下右栏重渲染后搜索仍应用
-          await win.webContents.executeJavaScript(`document.querySelector('#edit-toggle').click()`);
-          await new Promise((r) => setTimeout(r, 500));
+          // search3: 打开块级编辑时清空搜索（高亮不能混进编辑区，否则会被序列化进结果）
+          await win.webContents.executeJavaScript(`[...document.querySelectorAll('#viewer p[data-block]')][0].click()`);
+          await new Promise((r) => setTimeout(r, 400));
           console.log('[dev:search3]', await win.webContents.executeJavaScript(
-            `JSON.stringify({ marksInEditViewer: document.querySelectorAll('#edit-viewer mark.tot-search').length })`,
+            `JSON.stringify({
+              queryCleared: document.querySelector('#search-input').value === '',
+              marks: document.querySelectorAll('#viewer mark.tot-search').length,
+              blockEditing: !!document.querySelector('#viewer p.block-editing'),
+            })`,
+          ));
+          // search3b: 取消块编辑后重新查询，高亮恢复正常（搜索未被编辑打坏）
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#viewer p.block-editing')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          await win.webContents.executeJavaScript(
+            `{ const si = document.querySelector('#search-input');
+               si.value = ${JSON.stringify(process.env.TOT_SEARCH_QUERY || '测试')};
+               si.dispatchEvent(new Event('input', { bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:search3b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({ marks: document.querySelectorAll('#viewer mark.tot-search').length })`,
           ));
           // search4: Esc 清除查询与高亮（搜索条常显不隐藏）
           await win.webContents.executeJavaScript(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
           await new Promise((r) => setTimeout(r, 200));
           console.log('[dev:search4]', await win.webContents.executeJavaScript(
-            `JSON.stringify({ barShown: !document.querySelector('#searchbar').hidden, inputCleared: document.querySelector('#search-input').value === '', marks: document.querySelectorAll('#edit-viewer mark.tot-search').length })`,
+            `JSON.stringify({ barShown: !document.querySelector('#searchbar').hidden, inputCleared: document.querySelector('#search-input').value === '', marks: document.querySelectorAll('#viewer mark.tot-search').length })`,
           ));
           // search5: 跨节点命中的计数与上下跳转按完整命中（一个命中跨边界切成多个 mark 仍算一个）
-          await win.webContents.executeJavaScript(`document.querySelector('#edit-toggle').click()`);
-          await new Promise((r) => setTimeout(r, 500));
           await win.webContents.executeJavaScript(
             `{ const si = document.querySelector('#search-input');
                si.value = ${JSON.stringify(process.env.TOT_SEARCH_QUERY5 || '加粗测试')};
@@ -760,6 +1014,48 @@ async function createWindow() {
               count: document.querySelector('#search-count').textContent,
               currentIdx: [...document.querySelectorAll('#viewer mark.tot-search')].findIndex((m) => m.classList.contains('current')),
             })`,
+          ));
+          // search6: 中文输入法合成期间 Enter 不触发跳转、Esc 不清除（isComposing 守卫）
+          const imeBase = await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              count: document.querySelector('#search-count').textContent,
+              currentIdx: [...document.querySelectorAll('#viewer mark.tot-search')].findIndex((m) => m.classList.contains('current')),
+            })`,
+          );
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }))`,
+          );
+          await new Promise((r) => setTimeout(r, 200));
+          const imeAfter = await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              count: document.querySelector('#search-count').textContent,
+              currentIdx: [...document.querySelectorAll('#viewer mark.tot-search')].findIndex((m) => m.classList.contains('current')),
+            })`,
+          );
+          console.log('[dev:search6]', JSON.stringify({ base: JSON.parse(imeBase), afterImeEnter: JSON.parse(imeAfter), enterIgnored: imeBase === imeAfter }));
+          await win.webContents.executeJavaScript(
+            `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true }))`,
+          );
+          await new Promise((r) => setTimeout(r, 200));
+          console.log('[dev:search6b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({ inputKept: document.querySelector('#search-input').value !== '', marks: document.querySelectorAll('#viewer mark.tot-search').length })`,
+          ));
+          // 对照：非合成 Enter 仍跳转、非合成 Esc 仍清除（守卫没有破坏正常行为）
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`,
+          );
+          await new Promise((r) => setTimeout(r, 200));
+          const realAfter = await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              count: document.querySelector('#search-count').textContent,
+              currentIdx: [...document.querySelectorAll('#viewer mark.tot-search')].findIndex((m) => m.classList.contains('current')),
+            })`,
+          );
+          console.log('[dev:search6c]', JSON.stringify({ afterRealEnter: JSON.parse(realAfter), enterMoved: realAfter !== imeAfter }));
+          await win.webContents.executeJavaScript(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+          await new Promise((r) => setTimeout(r, 200));
+          console.log('[dev:search6d]', await win.webContents.executeJavaScript(
+            `JSON.stringify({ inputCleared: document.querySelector('#search-input').value === '', marks: document.querySelectorAll('#viewer mark.tot-search').length })`,
           ));
         }
         if (process.env.TOT_DROP) {
@@ -801,6 +1097,190 @@ async function createWindow() {
             `JSON.stringify({ tabCount: document.querySelectorAll('.tab').length })`,
           ));
           await fs.unlink(dropFile).catch(() => {});
+        }
+        if (process.env.TOT_MERMAID) {
+          const mermaidFile = path.join(path.resolve(process.env.TOT_OPEN_DIR), 'mermaid-test.md');
+          const before = await fs.readFile(mermaidFile, 'utf8'); // 基线（CRLF），最后还原用
+          await new Promise((r) => setTimeout(r, 3000)); // 等树懒加载定位完成
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#file-tree a')].find((a) => a.title === ${JSON.stringify(mermaidFile)})?.click()`,
+          );
+          await new Promise((r) => setTimeout(r, 1500)); // mermaid 渲染是异步的
+          // mermaid1: 渲染断言 —— 4 wrapper（2 svg + 2 错误态：坏语法 / 拼错图型名），序号 1:1，无 hljs 残留，
+          // 且 mermaid 失败的临时容器不泄漏到 body（用户可见的巨型「Syntax error in text」错误图）
+          console.log('[dev:mermaid1]', await win.webContents.executeJavaScript(`JSON.stringify({
+            mermaidLoaded: typeof window.mermaid !== 'undefined',
+            wrappers: document.querySelectorAll('#viewer .mermaid-wrapper').length,
+            idx: [...document.querySelectorAll('#viewer .mermaid-wrapper')].map((w) => w.dataset.idx),
+            svgs: document.querySelectorAll('#viewer .mermaid-wrapper > svg').length,
+            errors: document.querySelectorAll('#viewer .mermaid-wrapper.mermaid-error').length,
+            seqActor: [...document.querySelectorAll('#viewer .mermaid-wrapper > svg')].some((s) => s.textContent.includes('Alice')),
+            flowNode: [...document.querySelectorAll('#viewer .mermaid-wrapper > svg')].some((s) => s.textContent.includes('开始')),
+            hljsInside: document.querySelectorAll('#viewer .mermaid-wrapper .hljs-keyword, #viewer .mermaid-wrapper .hljs-string, #viewer .mermaid-wrapper pre').length,
+            themes: [...document.querySelectorAll('#viewer .mermaid-wrapper')].map((w) => w.dataset.theme),
+            svgId: document.querySelector('#viewer .mermaid-wrapper > svg')?.id ?? null,
+            svgSize: (() => { const r = document.querySelector('#viewer .mermaid-wrapper > svg')?.getBoundingClientRect(); return r ? [Math.round(r.width), Math.round(r.height)] : null; })(),
+            errorTexts: [...document.querySelectorAll('#viewer .mermaid-wrapper.mermaid-error')].map((w) => w.textContent),
+            bodyLeak: [...document.body.children].filter((el) => el.id && el.id.startsWith('dtot-mermaid-')).length,
+          })`));
+          // mermaid2: 搜索排除 —— 图表内标签词 Alice 全程 0 mark；正文词 Mermaid（标题）正常命中且 svg 内仍 0
+          await win.webContents.executeJavaScript(
+            `{ const si = document.querySelector('#search-input'); si.value = 'Alice'; si.dispatchEvent(new Event('input', { bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          const mermaid2a = await win.webContents.executeJavaScript(
+            `JSON.stringify({ marksInSvg: document.querySelectorAll('#viewer svg mark, #viewer .mermaid-wrapper mark').length, marksTotal: document.querySelectorAll('#viewer mark.tot-search').length })`,
+          );
+          await win.webContents.executeJavaScript(
+            `{ const si = document.querySelector('#search-input'); si.value = 'Mermaid'; si.dispatchEvent(new Event('input', { bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          const mermaid2b = await win.webContents.executeJavaScript(
+            `JSON.stringify({ marksTotal: document.querySelectorAll('#viewer mark.tot-search').length, marksInSvg: document.querySelectorAll('#viewer svg mark').length })`,
+          );
+          console.log('[dev:mermaid2]', JSON.stringify({ alice: JSON.parse(mermaid2a), mermaid: JSON.parse(mermaid2b) }));
+          await win.webContents.executeJavaScript(`document.querySelector('#search-close').click()`);
+          // mermaid3: 切暗色 → 全部 wrapper 重渲染（theme=dark 且 svg id 变化 = svg 被替换）
+          await win.webContents.executeJavaScript(
+            `{ const sel = document.querySelector('#style-select'); sel.value = 'github-dark'; sel.dispatchEvent(new Event('change')); }`,
+          );
+          await new Promise((r) => setTimeout(r, 800));
+          console.log('[dev:mermaid3]', await win.webContents.executeJavaScript(`JSON.stringify({
+            bodyClass: document.body.className,
+            themes: [...document.querySelectorAll('#viewer .mermaid-wrapper')].map((w) => w.dataset.theme),
+            newSvgId: document.querySelector('#viewer .mermaid-wrapper > svg')?.id ?? null,
+            svgs: document.querySelectorAll('#viewer .mermaid-wrapper > svg').length,
+            errors: document.querySelectorAll('#viewer .mermaid-wrapper.mermaid-error').length,
+          })`));
+          // 切回亮色继续
+          await win.webContents.executeJavaScript(
+            `{ const sel = document.querySelector('#style-select'); sel.value = 'github-light'; sel.dispatchEvent(new Event('change')); }`,
+          );
+          await new Promise((r) => setTimeout(r, 800));
+          // mermaid4: 预览模式编辑 —— 打开（含源码/序号保留）→ 只开一个 → 改标签 → debounce 预览更新 → 取消恢复
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .mermaid-wrapper').click()`);
+          await new Promise((r) => setTimeout(r, 400));
+          console.log('[dev:mermaid4]', await win.webContents.executeJavaScript(`JSON.stringify({
+            editorOpen: !!document.querySelector('#viewer .mermaid-editor'),
+            srcHasAlice: document.querySelector('#viewer .mermaid-editor-input')?.value.includes('Alice'),
+            editingClass: document.querySelector('#viewer .mermaid-wrapper').classList.contains('mermaid-editing'),
+            idxKept: document.querySelector('#viewer .mermaid-wrapper').dataset.idx,
+          })`));
+          await win.webContents.executeJavaScript(`document.querySelectorAll('#viewer .mermaid-wrapper')[1].click()`);
+          await new Promise((r) => setTimeout(r, 600));
+          console.log('[dev:mermaid4b]', await win.webContents.executeJavaScript(`JSON.stringify({
+            editors: document.querySelectorAll('#viewer .mermaid-editor').length,
+            firstRestored: !!document.querySelectorAll('#viewer .mermaid-wrapper')[0].querySelector('svg'),
+            secondEditing: document.querySelectorAll('#viewer .mermaid-wrapper')[1].classList.contains('mermaid-editing'),
+          })`));
+          await win.webContents.executeJavaScript(
+            `{ const t = document.querySelectorAll('#viewer .mermaid-wrapper')[1].querySelector('.mermaid-editor-input'); t.value = t.value.split('开始').join('起点'); t.dispatchEvent(new Event('input', { bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 600));
+          console.log('[dev:mermaid4c]', await win.webContents.executeJavaScript(`JSON.stringify({
+            previewUpdated: document.querySelectorAll('#viewer .mermaid-wrapper')[1].querySelector('.mermaid-editor-preview svg')?.textContent.includes('起点') ?? false,
+          })`));
+          await win.webContents.executeJavaScript(`document.querySelectorAll('#viewer .mermaid-wrapper')[1].querySelector('.mermaid-cancel').click()`);
+          await new Promise((r) => setTimeout(r, 600));
+          console.log('[dev:mermaid4d]', await win.webContents.executeJavaScript(`JSON.stringify({
+            editorGone: !document.querySelectorAll('#viewer .mermaid-wrapper')[1].querySelector('.mermaid-editor'),
+            restored: document.querySelectorAll('#viewer .mermaid-wrapper')[1].querySelector('svg')?.textContent.includes('开始') ?? false,
+            dirty: !document.querySelector('.tab.active .tab-dirty').hidden,
+          })`));
+          // mermaid5: 应用 —— tab.text 更新 + dirty + 重渲染（预览即编辑：无编辑模式可切）
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .mermaid-wrapper').click()`);
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const t = document.querySelector('#viewer .mermaid-editor-input'); t.value = t.value.split('Alice').join('爱丽丝'); t.dispatchEvent(new Event('input', { bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .mermaid-apply').click()`);
+          await new Promise((r) => setTimeout(r, 800));
+          console.log('[dev:mermaid5]', await win.webContents.executeJavaScript(`JSON.stringify({
+            editorGone: !document.querySelector('#viewer .mermaid-editor'),
+            svgHasNew: document.querySelector('#viewer .mermaid-wrapper > svg')?.textContent.includes('爱丽丝') ?? false,
+            svgHasOld: document.querySelector('#viewer .mermaid-wrapper > svg')?.textContent.includes('Alice') ?? false,
+            dirty: !document.querySelector('.tab.active .tab-dirty').hidden,
+          })`));
+          // mermaid5b: 应用后 dirty → 保存按钮启用
+          console.log('[dev:mermaid5b]', await win.webContents.executeJavaScript(`JSON.stringify({
+            saveEnabled: !document.querySelector('#save-btn').disabled,
+            tabDirty: !document.querySelector('.tab.active .tab-dirty').hidden,
+          })`));
+          // mermaid6: 预览区再改 爱丽丝→鲍勃 应用 —— 重渲染 + dirty；保存落盘 CRLF 还原
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .mermaid-wrapper').click()`);
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const t = document.querySelector('#viewer .mermaid-editor-input'); t.value = t.value.split('爱丽丝').join('鲍勃'); t.dispatchEvent(new Event('input', { bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .mermaid-apply').click()`);
+          await new Promise((r) => setTimeout(r, 800));
+          console.log('[dev:mermaid6]', await win.webContents.executeJavaScript(`JSON.stringify({
+            svgHasNew: document.querySelector('#viewer .mermaid-wrapper > svg')?.textContent.includes('鲍勃') ?? false,
+            svgHasOld: document.querySelector('#viewer .mermaid-wrapper > svg')?.textContent.includes('爱丽丝') ?? false,
+            dirty: !document.querySelector('.tab.active .tab-dirty').hidden,
+          })`));
+          await win.webContents.executeJavaScript(`document.querySelector('#save-btn').click()`);
+          await new Promise((r) => setTimeout(r, 700));
+          const saved = await fs.readFile(mermaidFile, 'utf8');
+          console.log('[dev:mermaid6b]', JSON.stringify({
+            diskHasNew: saved.includes('鲍勃'),
+            crlfPreserved: saved.includes('\r\n') && !/[^\r]\n/.test(saved),
+            dirtyGone: await win.webContents.executeJavaScript(`document.querySelector('.tab.active .tab-dirty').hidden`),
+          }));
+          // mermaid7: 错误态围栏（坏语法，idx 2）—— Esc 取消路径 + 打开修复 + 应用后 4 svg 1 错误
+          await win.webContents.executeJavaScript(`[...document.querySelectorAll('#viewer .mermaid-wrapper')][2].click()`);
+          await new Promise((r) => setTimeout(r, 400));
+          console.log('[dev:mermaid7]', await win.webContents.executeJavaScript(`JSON.stringify({
+            editorOnError: [...document.querySelectorAll('#viewer .mermaid-wrapper')][2].querySelector('.mermaid-editor-input')?.value.includes('未闭合') ?? false,
+          })`));
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#viewer .mermaid-editor-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+          );
+          await new Promise((r) => setTimeout(r, 600));
+          console.log('[dev:mermaid7b]', await win.webContents.executeJavaScript(`JSON.stringify({
+            editorGone: !document.querySelector('#viewer .mermaid-editor'),
+            errorsStill: document.querySelectorAll('#viewer .mermaid-wrapper.mermaid-error').length,
+          })`));
+          await win.webContents.executeJavaScript(`[...document.querySelectorAll('#viewer .mermaid-wrapper')][2].click()`);
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const t = document.querySelector('#viewer .mermaid-editor-input'); t.value = t.value.split('A[未闭合').join('A[已闭合]'); t.dispatchEvent(new Event('input', { bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .mermaid-apply').click()`);
+          await new Promise((r) => setTimeout(r, 800));
+          console.log('[dev:mermaid7c]', await win.webContents.executeJavaScript(`JSON.stringify({
+            svgs: document.querySelectorAll('#viewer .mermaid-wrapper > svg').length,
+            errors: document.querySelectorAll('#viewer .mermaid-wrapper.mermaid-error').length,
+            fixed: [...document.querySelectorAll('#viewer .mermaid-wrapper > svg')].some((s) => s.textContent.includes('已闭合')),
+          })`));
+          // mermaid7d: 拼错图型名（chart TD，idx 3）错误态 —— 错误信息含「图型未识别」，编辑器载入原源码，修正后 5 svg 0 错误
+          const mermaid7dPre = JSON.parse(await win.webContents.executeJavaScript(
+            `JSON.stringify({ chartErrText: [...document.querySelectorAll('#viewer .mermaid-wrapper')][3].textContent.includes('No diagram type detected') })`,
+          ));
+          await win.webContents.executeJavaScript(`[...document.querySelectorAll('#viewer .mermaid-wrapper')][3].click()`);
+          await new Promise((r) => setTimeout(r, 400));
+          const mermaid7dOpen = JSON.parse(await win.webContents.executeJavaScript(
+            `JSON.stringify({ editorHasChart: [...document.querySelectorAll('#viewer .mermaid-wrapper')][3].querySelector('.mermaid-editor-input')?.value.includes('chart TD') ?? false })`,
+          ));
+          await win.webContents.executeJavaScript(
+            `{ const t = document.querySelector('#viewer .mermaid-editor-input'); t.value = t.value.split('chart TD').join('flowchart TD'); t.dispatchEvent(new Event('input', { bubbles: true })); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .mermaid-apply').click()`);
+          await new Promise((r) => setTimeout(r, 800));
+          console.log('[dev:mermaid7d]', await win.webContents.executeJavaScript(`JSON.stringify({
+            ...${JSON.stringify(mermaid7dPre)}, ...${JSON.stringify(mermaid7dOpen)},
+            svgs: document.querySelectorAll('#viewer .mermaid-wrapper > svg').length,
+            errors: document.querySelectorAll('#viewer .mermaid-wrapper.mermaid-error').length,
+            chartFixed: [...document.querySelectorAll('#viewer .mermaid-wrapper > svg')].some((s) => s.textContent.includes('测试')),
+          })`));
+          // 还原 fixture（测试数据零污染）
+          await win.webContents.executeJavaScript(`window.tot.writeFile(${JSON.stringify(mermaidFile)}, ${JSON.stringify(before)})`);
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:mermaid8]', JSON.stringify({ restored: await fs.readFile(mermaidFile, 'utf8') === before }));
         }
         if (process.env.TOT_DRAG) {
           await new Promise((r) => setTimeout(r, 3000)); // 等树懒加载定位完成
@@ -925,7 +1405,7 @@ async function createWindow() {
     } catch (err) {
       console.error('[dev] auto-drive failed:', err);
     }
-    if (process.env.TOT_SCREENSHOT || process.env.TOT_CHECK || process.env.TOT_PANELS || process.env.TOT_DRAG || process.env.TOT_DROP) app.quit();
+    if (process.env.TOT_SCREENSHOT || process.env.TOT_CHECK || process.env.TOT_PANELS || process.env.TOT_DRAG || process.env.TOT_DROP || process.env.TOT_MERMAID || process.env.TOT_EDIT || process.env.TOT_SEARCH || process.env.TOT_TABS) app.quit();
   });
 }
 

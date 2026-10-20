@@ -4,13 +4,13 @@
 
 ## 目标与成功标准
 
-选一个本地目录 → 浏览其中全部 .md 文件 → 渲染阅读，12 套渲染风格可选，自动生成大纲；支持多标签页、双栏实时预览编辑保存、文件内查找、面板拖拽，自动记住上次目录。
+选一个本地目录 → 浏览其中全部 .md 文件 → 渲染阅读，12 套渲染风格可选，自动生成大纲；支持多标签页、预览即编辑（富文本就地编辑 + 代码/图表图框内源码编辑）、Mermaid 图表、文件内查找、面板拖拽，自动记住上次目录。
 
 1.1 成功标准（全部满足才算完成）：
 
 1. 窗口标题 Tot；顶栏无文字/无打开文件夹按钮；菜单栏 文件/编辑/视图/窗口（文件含打开文件 Ctrl+O、打开文件夹 Ctrl+Shift+O、保存 Ctrl+S；窗口含关于 Tot 与 MIT 许可协议）
 2. 多标签页：打开多个文件成 tab，开关切换滚动恢复、dirty 关闭确认、全部关闭回空态
-3. 编辑：双栏实时预览（左 textarea + 右渲染，300ms debounce）、Ctrl+S 落盘（按原文件换行风格还原）、dirty 回显、越界路径拒写、编辑模式出现保存按钮（预览模式变灰）
+3. 编辑（预览即编辑，1.2.0 修订）：无「编辑/预览」切换与双栏——应用只有预览一个界面；点击文本块富文本所见即所得就地编辑（格式随改随显，应用后按 GFM 回写源文）、代码围栏与图表在图框内改源码（图表带实时预览）；Ctrl+S 或顶栏保存按钮落盘（active tab dirty 时可用，按原文件换行风格还原）；dirty 回显、越界路径拒写
 4. 搜索：Ctrl+F 文件内查找，高亮/计数/上下跳转，重渲染后自动重应用
 5. 拖拽：文件夹导航与大纲框可拖动大小（sidebar 200–600px / outline 120–600px clamp）
 6. 重启自动恢复上次目录（userData/config.json）
@@ -21,6 +21,7 @@
 
 - Electron（44.7.2）+ 原生 JS。**无前端框架、无构建工具**（渲染层就是静态 HTML+JS+CSS）
 - Markdown 解析：marked（UMD 版，vendored 到 `lib/`，离线可用）
+- 富文本回写：turndown + turndown-plugin-gfm（UMD vendored，HTML → GFM，覆盖表格/删除线/任务列表）
 - 代码语法高亮：highlight.js 11.11.1（common 语言集 vendored），渲染后对 `pre code` 调 `hljs.highlightElement`（有 language class 用之，否则自动检测）；token 配色按 12 套风格各写一份（6 个颜色桶），不走 hljs 官方主题（避免多主题全局类互相覆盖）
 - 风格样式：github-markdown-css（light / dark vendored）+ 10 个手写 css（minimal / rtd / notion-light / notion-dark / typora-white / typora-night / obsidian / dracula / nord / monokai / shell-github-dark）
 - 安全基线：`contextIsolation: true`、`nodeIntegration: false`；渲染进程不碰 Node API，全部通过 preload 的 contextBridge 白名单 IPC（select-directory / select-file / read-file / write-file / resolve-images / onDirectorySelected / onMenuCommand）；CSP `default-src 'none'` 白名单
@@ -35,12 +36,14 @@ md-browser/
 ├── main.js           # 主进程：窗口/菜单、目录扫描、文件读写、mdfile:// 协议、config、dev 验证钩子
 ├── preload.js        # contextBridge 暴露 7 个白名单 API
 ├── renderer/
-│   ├── index.html    # 顶栏(搜索条+编辑/保存按钮+风格选择) + 左栏(文件树+大纲) + tab 条 + 双栏正文
-│   ├── app.js        # 多标签页、双栏编辑、查找、大纲/scrollspy、拖拽、12 套风格注册表
+│   ├── index.html    # 顶栏(搜索条+保存按钮+风格选择) + 左栏(文件树+大纲) + tab 条 + 预览正文
+│   ├── app.js        # 多标签页、就地编辑（富文本 + 代码/图表）、查找、大纲/scrollspy、拖拽、12 套风格注册表
 │   ├── base.css      # 应用布局与控件样式（与渲染风格无关的部分）
 │   └── styles/       # 手写渲染风格（每套 = 正文排版，7 套暗色另含外壳配色块）
 └── lib/              # 全部第三方 vendored 文件
     ├── marked.min.js
+    ├── turndown.min.js
+    ├── turndown-plugin-gfm.min.js
     ├── highlight.min.js
     ├── github-markdown-light.css
     └── github-markdown-dark.css
@@ -60,10 +63,13 @@ md-browser/
 - 关闭激活 tab 切邻居；dirty 关闭 → 自绘 #close-confirm 浮条（不用 window.confirm——同步阻塞会挂死自动化）
 - 切换 tab：缓存 text 重渲染 → outline → 恢复 scrollTop → 树 active 恢复
 
-### 编辑与保存
+### 编辑与保存（1.2.0 修订：预览即编辑）
 
-- 「编辑/预览」切换按钮：互存滚动位置；编辑模式 = 左 textarea + 右 #edit-viewer 实时渲染（input 即时同步 text/dirty，300ms debounce 渲染，切 tab/切模式 cancel 且回调内校验）
-- 保存唯一入口 = 菜单 Ctrl+S 与编辑模式保存按钮（同一函数）：写盘按 tab.lineEnding 还原 \r\n/\n；渲染层**不监听** Ctrl+S 防菜单 accelerator 双触发
+- 单一预览界面：删除「编辑/预览」切换按钮与双栏（#editor / #edit-viewer / mode 状态机 / editTimer）
+- 文本块富文本就地编辑（contenteditable）：点击段落/标题/引用（含 callout）/列表/表格/hr → 块直接变为可编辑，格式随改随显；浮动工具条（加粗/斜体/删除线/行内代码/格式 p·h1–h3/完成/取消——execCommand，行内代码手动包 `<code>`）；失焦 = 应用（块 HTML → GFM，vendored turndown + turndown-plugin-gfm 序列化后回写源文区间）、Esc = 取消、粘贴按纯文本；callout 只编辑正文（`[!NOTE]` 标题行由原源文区间保留重建）；同时只开一个编辑器（与图表/代码编辑器互斥）；有文本选区时不触发；进入编辑前自动关闭搜索
+- 块定位：渲染时给顶层可编辑块依次加 `data-block` 序号；应用时 `marked.lexer(tab.text)` 按同过滤类型（heading/paragraph/blockquote/list/table/code/hr；html 与 space 两侧同跳过）顺序游标用 token.raw 定位源码区间；写回 = 区间替换 + \n 归一；每次重渲染后序号重算
+- 代码围栏与图表编辑（保持图框内源码编辑）：源码 textarea + 图表 300ms debounce 实时预览 + 应用/取消/Esc
+- 保存唯一入口 = 菜单 Ctrl+S 与顶栏保存按钮（同一函数；active tab dirty 时可用）：写盘按 tab.lineEnding 还原 \r\n/\n；渲染层**不监听** Ctrl+S 防菜单 accelerator 双触发；保存前 flush 未应用修改
 
 ### 查找（Ctrl+F）
 
@@ -73,8 +79,8 @@ md-browser/
 ### 渲染与大纲
 
 - `marked.parse()` 套 `markdown-body` + 当前风格 class；覆盖 html renderer 转义原始 HTML；图片相对路径改写为 mdfile://
-- 标题 slugify + 序号去重 → 大纲缩进列表；IntersectionObserver scrollspy（root 随预览/编辑模式切换）；点击跳转
-- 渲染管线顺序：parse → fixImages → hljs 高亮 → callout 转换 → headingIds → applySearch
+- 标题 slugify + 序号去重 → 大纲缩进列表；IntersectionObserver scrollspy；点击跳转
+- 渲染管线顺序：flush 未应用修改 → parse → resolveImages → mermaid 渲染 → hljs 高亮 → callout 转换 → headingIds → applySearch
 
 ### Callout 标注块
 
@@ -142,6 +148,17 @@ md-browser/
 - 搜索命中归组：一个逻辑命中跨节点切出的多个 mark 片段归为同一组——计数与上下跳转按完整命中走（原实现每个片段算一个命中，`log('测试')` 显示 1/4 且 ↓ 在片段间逐字移动）；current 高亮覆盖该命中的全部片段
 - 目录树左对齐：子节点不再向右缩进（#file-tree ul 的 padding-left 16px → 0，根级 4px 保留）——所有层级文字左边界对齐，层级只靠展开三角区分
 - 验证：[dev:search5-5c] 跨节点命中归组断言（marks=4 片段 / count=1/2、↓ 跳第二个完整命中的首片段、再 ↓ 回绕）；[dev:check1] treeIndents 断言（根 4px / 嵌套全 0px）
+
+## 1.2.0 新功能（Mermaid 图表渲染与就地编辑）+ 附带修正
+
+- Mermaid 渲染：全部图型（vendored lib/mermaid.min.js 12.2.0，CSP 无需改动）；渲染管线在 hljs 之前把 ```mermaid 围栏替换为 .mermaid-wrapper（data-idx 序号 1:1 对应源文围栏），成功注入 svg（securityLevel strict 消毒），失败显示错误态（保留 wrapper 序号，仍可点击编辑）；mermaid 失败时会把内置错误图（大号「Syntax error in text」）画进挂在 body 的临时容器且只清理成功路径——渲染入口 finally 按 id 兜底删除，页面不残留巨型错误图
+- 就地编辑（1.2.0 修订：预览即编辑——去双栏，正文块与图表统一在预览界面就地改）：删除「编辑/预览」双栏切换；点击文本块富文本所见即所得编辑（contenteditable + turndown 回写 GFM）、点击代码围栏/图表在图框内改源码（图表带实时预览，设计详见「编辑与保存（1.2.0 修订）」）；同时只开一个编辑器；应用/落回后同步 WeakMap 源码保证重主题一致
+- 防静默丢失：整页重渲染前 flush（图表编辑 + 文本块编辑）落回未应用修改；关闭标签页 dirty 检查前、保存前 flush；风格切换先 flush 再按新明暗主题（neutral/dark）重渲染当前渲染区全部图表
+- 围栏定位：按序号扫源文围栏（词法与 marked 对齐：3+ 反引号/波浪线、> 引用前缀、大小写不敏感、反引号 lookahead）；序号漂移按内容兜底；写回只动内容行、\n 归一（saveActiveTab 按 tab.lineEnding 还原）
+- 搜索修正：SVG 文本节点不参与搜索（mark 不能插进 SVG 破坏图表）；编辑态容器（图表/代码编辑器）不参与搜索（mark 不能插进 textarea）；进入文本块编辑前自动关闭搜索（防 mark 混入编辑区被序列化）；中文输入法合成期间 Enter/Esc 不触发搜索跳转/清除（isComposing 守卫，编辑器内 Esc 同理）
+- 波浪号修正：正文单个 `~`（如数字区间 1~6、7~9）不再被误判为删除线——vendored marked 18.1.1 的删除线开号规则 `~~?` 收紧为 `~~`（GFM/GitHub 对齐；`~~删除线~~`、跨行配对、`\~` 转义、波浪线围栏均不受影响）；补丁改 live 路径的 delLDelim 规则（默认规则表里的 del 条目 parse 并不使用，改它无效）
+- 安装包：升级时先卸载再安装——build/installer.nsh customInit 结束运行中的 Tot.exe（精确镜像名，不误杀便携版）+ 枚举 HKCU 卸载注册表静默卸载旧版（卸载后索引前移重新枚举）；package.json nsis.include
+- 验证：[dev:mermaid1-8] 渲染/序号/错误态（坏语法 + 拼错图型名 chart TD）/泄漏清理（bodyLeak=0）/搜索排除/重主题/编辑-预览-取消/应用 dirty/保存 CRLF 还原/错误态修复（7c 坏语法、7d 拼错图型名）/fixture 还原（dirty 断言读激活 tab 的指示器，多 tab 下编辑非首个 tab 亦成立）；[dev:search6-6d] IME 合成 Enter/Esc 忽略 + 真实键位对照；[dev:check1] 新增 delCheck（表格原文 1~6 纯文本显示、delCount=1 且仅 `~~删除线~~`）+ 波浪号 fixture；[dev:block1-N]（TOT_EDIT 重写，双栏套件作废）富文本就地编辑：段落加粗/斜体/删除线/行内代码/改标题应用回写 GFM（`**`/`_`/`~~`/反引号）与重渲染一致、表格单元格改文字回写管道表、callout 改正文保留 `[!NOTE]` 标题行、图片 src 回写相对路径、失焦应用、Esc 取消、粘贴纯文本、dirty、Ctrl+S 落盘 CRLF 还原、关闭确认、越界拒写、连续多块编辑后序号仍准、代码围栏仍源码编辑、进入编辑自动关搜索；升级链路实测（打包轮）
 
 ## 已知限制（1.1）
 
