@@ -1123,7 +1123,7 @@ async function applyBlockEdit() {
   if (!b || b.tab !== activeTab) return;
   const newSrc = b.kind === 'code' ? (b.el.querySelector('textarea')?.value ?? null) : serializeBlock(b.el);
   if (newSrc === null) return;
-  if (newSrc === b.originalSrc) { cancelBlockEdit(); return; } // 没改动视同取消
+  if (blockEditUnchanged(newSrc, b.originalSrc)) { cancelBlockEdit(); return; } // 没改动视同取消
   writeBlockEdit(b, newSrc);
   await renderMarkdown($('#viewer'), b.tab.text, b.tab.path);
   rebuildOutline();
@@ -1156,9 +1156,35 @@ function flushBlockEdit() {
   const b = blockEditor;
   if (!b) return;
   const newSrc = b.kind === 'code' ? (b.el.querySelector('textarea')?.value ?? null) : serializeBlock(b.el);
-  if (newSrc !== null && newSrc !== b.originalSrc) writeBlockEdit(b, newSrc);
+  if (newSrc !== null && !blockEditUnchanged(newSrc, b.originalSrc)) writeBlockEdit(b, newSrc);
   else blockEditor = null;
   updateUndoButton();
+}
+
+// 「没改动就退出」判断：先比字符串（去尾换行）；不等时比渲染等价——
+// turndown 输出与原文常有渲染等价差异（列表标记空格数、表格对齐、星号转义、
+// 软换行空白折叠），用 marked 渲染后比「结构签名 + 文本」；结构签名保证
+// 段落⇄引用/列表这类纯结构转换不被误判为无改动
+function blockEditUnchanged(newSrc, originalSrc) {
+  const strip = (s) => s.replace(/\n+$/, '');
+  if (strip(newSrc) === strip(originalSrc)) return true;
+  try {
+    const fold = (s) => s.replace(/\s+/g, ' ');
+    // 签名含每个元素的直接文本：加粗范围移动（如「这是」并入相邻 strong）时
+    // 文本节点归属变化，签名必不同——纯 tag 序列会漏掉这类格式边界变化
+    const sig = (el) => {
+      const txt = fold([...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join(''));
+      return el.tagName + '(' + txt + [...el.children].map(sig).join('') + ')';
+    };
+    const render = (md) => {
+      const div = document.createElement('div');
+      div.innerHTML = marked.parse(md);
+      return { sig: [...div.children].map(sig).join(''), text: fold(div.innerText) };
+    };
+    const a = render(newSrc);
+    const b = render(originalSrc);
+    return a.sig === b.sig && a.text === b.text;
+  } catch { return false; }
 }
 
 // 编辑块 → GFM：克隆后清理编辑态产物（工具条/标题行/contenteditable），嵌套图表按位置

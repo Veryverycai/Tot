@@ -172,6 +172,13 @@ md-browser/
 - 进编辑更顺滑：findBlockRange 的词法结果按 tab.text 缓存（单条 lexCache，文本变化自然失效）——同一文档连续点块进编辑不再每次全量 marked.lexer
 - 验证：[dev:edit1] 新增 editStyle 计算样式断言（outlineWidth 2px / solid / rgba 蓝底）；[dev:edit14-14b] h4 转换与 `#### 第二章` 回写；[dev:edit15-16b] 列表互转回写 `-   这是`（gfm 前缀 3 空格）；[dev:edit17-17b] 引用块回写 `> `；[dev:edit18-18b] 撤销按钮生效且编辑态保持；[dev:edit19] 清除格式；[dev:edit20-20c] 行内链接插入 `[图片：](https://example.com)` 回写；[dev:edit21-21c] 插图片回写 `![a.png](a.png)`；[dev:edit22-24] 最终落盘全量断言（LF 保持、取消项不落盘）+ fixture 还原 + 越界拒写；TOT_CHECK undoBtn 断言 + TOT_SEARCH/TOT_MERMAID/TOT_TABS 回归
 
+### 修正（双击进编辑不改动退出仍写回/脏标）
+
+- 现象：进入块编辑后不做任何修改、失焦退出，源文被写回并标脏——turndown 序列化输出与原文存在渲染等价差异（尾随换行、`\*` 星号转义、软换行 \n 被空白折叠成空格、列表标记 3 空格 vs 1 空格、表格对齐空格），原「`newSrc === originalSrc` 严格相等才取消」拦不住
+- 修复：applyBlockEdit/flushBlockEdit 的「没改动视同取消」改用 blockEditUnchanged——先比去尾换行的字符串，不等时双方 marked 渲染后比「结构签名 + 文本」（fold 空白）：签名含每个元素的直接文本，加粗范围移动（文本节点归属变化）必不同，纯 tag 序列会漏判；签名相同 + 文本相同才视为无改动
+- 顺带修正：fixture 清理模式改为直接删 `TOT编辑段落`（此前 `\nTOT编辑段落` 匹配不到行尾污染，套件中途崩掉后污染永续）
+- 验证：新 TOT_DBL 套件（9 块型矩阵：普通/相邻星号/软换行/混排行内/删除线/列表/引用/标题/表格，单击进编辑 → dblclick → 选中词 → 移焦退出）全部 changed:false + dirty:false；TOT_EDIT 全绿（edit6 加粗/19 清格式/22 落盘断言与基线一致）；TOT_CHECK/SEARCH/MERMAID/TABS 回归绿
+
 ## 已知限制（1.1）
 
 - BOM 丢失：读文件按 utf8 解码，带 BOM 的 md 保存后 BOM 不保留（内容不变）

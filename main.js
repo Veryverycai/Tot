@@ -1164,6 +1164,74 @@ async function createWindow() {
             ),
           }));
         }
+        if (process.env.TOT_DBL) {
+          await new Promise((r) => setTimeout(r, 800));
+          // 复现「双击进编辑、不改任何内容、失焦退出」：全块型矩阵
+          // （普通 / 相邻星号 / 软换行 / 混排行内 / 删除线 / 列表 / 引用 / 标题 / 表格），
+          // 真实焦点转移触发 focusout=应用；每块断言 before/after 内容与 dirty
+          const dblFile = path.join(process.env.TOT_OPEN_DIR, 'dbl-test.md');
+          await fs.writeFile(dblFile, [
+            '普通段落，无任何格式。',
+            '',
+            '这是**甲****乙**测试。',
+            '',
+            '含软换行段落第一行',
+            '第二行还在同一段。',
+            '',
+            '这是**加粗**和*斜体*和`代码`混合。',
+            '',
+            '~~删除线~~文字。',
+            '',
+            '- 列表项一',
+            '- 列表项二',
+            '',
+            '> 引用行',
+            '',
+            '### 三级标题',
+            '',
+            '| 列A | 列B |',
+            '|---|---|',
+            '| a | b |',
+          ].join('\n'), 'utf8');
+          console.log('[dev:dbl0]', await win.webContents.executeJavaScript(
+            `window.tot.openDropped(${JSON.stringify(dblFile)}).then(() => 'ok', (e) => 'err:' + e)`,
+          ));
+          await new Promise((r) => setTimeout(r, 800));
+          const flow = (i) => `(async () => {
+            const out = { idx: ${i} };
+            const blocks = [...document.querySelectorAll('#viewer [data-block]')];
+            const block = blocks[${i}];
+            const tw = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+            out.before = block.textContent;
+            out.beforeStrong = [...block.querySelectorAll('strong')].map((s) => s.textContent).join('|');
+            // 诊断：直接调用序列化函数，看输出与原文差异（普通 script 顶层函数挂 window）
+            out.serRaw = (typeof window.serializeBlock === 'function') ? window.serializeBlock(block) : 'NOFN';
+            block.click();
+            await new Promise((r) => setTimeout(r, 100));
+            out.editing = block.classList.contains('block-editing');
+            block.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 }));
+            await new Promise((r) => setTimeout(r, 50));
+            out.dblSel = getSelection().toString(); // 浏览器默认双击选词是否发生
+            block.focus(); // 确保焦点在块上，移焦才触发 focusout
+            const tn = tw.nextNode();
+            if (tn) { // 模拟双击选中一个词
+              const sel = getSelection();
+              const r = document.createRange();
+              r.setStart(tn, 0); r.setEnd(tn, Math.min(2, tn.length));
+              sel.removeAllRanges(); sel.addRange(r);
+            }
+            document.querySelector('#search-input').focus(); // 失焦 = 应用
+            await new Promise((r) => setTimeout(r, 500));
+            const after = [...document.querySelectorAll('#viewer [data-block]')][${i}];
+            out.after = after.textContent;
+            out.afterStrong = [...after.querySelectorAll('strong')].map((s) => s.textContent).join('|');
+            out.changed = out.before !== out.after;
+            out.dirty = !document.querySelector('.tab.active .tab-dirty').hidden;
+            return JSON.stringify(out);
+          })()`;
+          for (let i = 0; i < 9; i++) console.log(`[dev:dbl${i + 1}]`, await win.webContents.executeJavaScript(flow(i)));
+          await fs.unlink(dblFile).catch(() => {});
+        }
         if (process.env.TOT_SEARCH) {
           await new Promise((r) => setTimeout(r, 800));
           // search1: Ctrl+F 开搜索条，输入查询
@@ -1646,7 +1714,7 @@ async function createWindow() {
     } catch (err) {
       console.error('[dev] auto-drive failed:', err);
     }
-    if (process.env.TOT_SCREENSHOT || process.env.TOT_CHECK || process.env.TOT_PANELS || process.env.TOT_DRAG || process.env.TOT_DROP || process.env.TOT_MERMAID || process.env.TOT_EDIT || process.env.TOT_SEARCH || process.env.TOT_TABS) app.quit();
+    if (process.env.TOT_SCREENSHOT || process.env.TOT_CHECK || process.env.TOT_PANELS || process.env.TOT_DRAG || process.env.TOT_DROP || process.env.TOT_MERMAID || process.env.TOT_EDIT || process.env.TOT_SEARCH || process.env.TOT_TABS || process.env.TOT_DBL) app.quit();
   });
 }
 
