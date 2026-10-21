@@ -52,6 +52,7 @@ const STYLES = [
   { id: 'typora-white', group: '文档', label: 'Typora White', dark: false, files: ['styles/typora-white.css', 'styles/callouts.css', 'styles/mermaid.css'] },
   { id: 'typora-night', group: '文档', label: 'Typora Night', dark: true, files: ['styles/typora-night.css', 'styles/callouts-dark.css', 'styles/mermaid-dark.css'] },
   { id: 'obsidian', group: '文档', label: 'Obsidian', dark: true, files: ['styles/obsidian.css', 'styles/callouts-dark.css', 'styles/mermaid-dark.css'] },
+  { id: 'newspaper', group: '文档', label: '报纸', dark: false, files: ['styles/newspaper.css', 'styles/callouts.css', 'styles/mermaid.css'] },
   { id: 'dracula', group: '代码编辑器', label: 'Dracula', dark: true, files: ['styles/dracula.css', 'styles/callouts-dark.css', 'styles/mermaid-dark.css'] },
   { id: 'nord', group: '代码编辑器', label: 'Nord', dark: true, files: ['styles/nord.css', 'styles/callouts-dark.css', 'styles/mermaid-dark.css'] },
   { id: 'monokai', group: '代码编辑器', label: 'Monokai', dark: true, files: ['styles/monokai.css', 'styles/callouts-dark.css', 'styles/mermaid-dark.css'] },
@@ -410,6 +411,19 @@ $('#close-cancel').addEventListener('click', () => { pendingCloseIndex = -1; $('
 // 顶栏保存按钮（与菜单 Ctrl+S 同一路径）
 $('#save-btn').addEventListener('click', saveActiveTab);
 
+// 顶栏「撤销」按钮：与编辑菜单「撤销」同款（主进程 webContents.undo 原生撤销当前焦点编辑区），
+// 省得去编辑菜单选。mousedown 不抢焦点，否则块失焦会被当作「应用」提交
+const undoBtn = $('#undo-btn');
+undoBtn.addEventListener('mousedown', (e) => e.preventDefault());
+undoBtn.addEventListener('click', () => window.tot.undo());
+function updateUndoButton() {
+  const ae = document.activeElement;
+  undoBtn.disabled = !(blockEditor || diagramEditor ||
+    (ae && (ae.isContentEditable || ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT')));
+}
+document.addEventListener('focusin', updateUndoButton);
+document.addEventListener('focusout', () => setTimeout(updateUndoButton, 0)); // focusout 时 activeElement 尚未更新
+
 function updateTabbarDirty(tab) {
   if (tab.el) tab.el.querySelector('.tab-dirty').hidden = !tab.dirty;
   if (tab === activeTab) $('#save-btn').disabled = !tab.dirty;
@@ -631,6 +645,7 @@ function openDiagramEditor(viewerEl, wrapper) {
   editor.querySelector('.mermaid-apply').addEventListener('click', applyDiagramEdit);
   editor.querySelector('.mermaid-cancel').addEventListener('click', cancelDiagramEdit);
   renderDiagramPreview(editor.querySelector('.mermaid-editor-preview'), src);
+  updateUndoButton();
 }
 
 // 编辑器内预览：直接注入 svg（不经 renderMarkdown——那会销毁编辑器自身）；失败显示错误文本
@@ -681,6 +696,7 @@ async function cancelDiagramEdit() {
 function resetDiagramEditor() {
   clearTimeout(diagramPreviewTimer);
   diagramEditor = null;
+  updateUndoButton();
 }
 
 // 整页重渲染/关闭标签页前调用：打开着的编辑器若已有修改，先写回 tab.text（含 dirty），
@@ -758,9 +774,12 @@ function assignBlockIndices(targetEl) {
 
 // 按序号定位源文区间：marked.lexer 顺序游标，token.raw 即消费的原文切片（块 raw 不含尾换行，
 // 换行由 space token 承担——替换区间即天然保留块间分隔）
+// 词法结果按文本缓存：同一文档内连续点块进编辑不再每次全量词法分析
+let lexCache = { text: null, tokens: null };
 function findBlockRange(text, idx) {
+  if (lexCache.text !== text) lexCache = { text, tokens: marked.lexer(text) };
   let cursor = 0, n = -1;
-  for (const t of marked.lexer(text)) {
+  for (const t of lexCache.tokens) {
     if (BLOCK_TYPES.has(t.type)) {
       n++;
       if (n === idx) return { start: cursor, end: cursor + t.raw.length };
@@ -797,36 +816,67 @@ function openRichEditor(el, idx, range, src) {
     <button data-cmd="italic" title="斜体"><i>I</i></button>
     <button data-cmd="strikeThrough" title="删除线"><s>S</s></button>
     <button data-cmd="code" title="行内代码">\`</button>
+    <button data-cmd="removeFormat" title="清除格式">Tx</button>
+    <button data-cmd="ul" title="无序列表">≡</button>
+    <button data-cmd="ol" title="有序列表">1≡</button>
+    <button data-cmd="quote" title="引用块">❝</button>
+    <button data-cmd="link" title="链接">🔗</button>
+    <button data-cmd="image" title="插入图片">🖼</button>
     <select class="block-format" title="块格式">
       <option value="p">正文</option>
       <option value="h1">标题 1</option>
       <option value="h2">标题 2</option>
       <option value="h3">标题 3</option>
+      <option value="h4">标题 4</option>
+      <option value="h5">标题 5</option>
+      <option value="h6">标题 6</option>
     </select>
+    <span class="block-link-ui" hidden><input class="block-link-input" placeholder="https://…" title="链接地址"><button class="block-link-ok">确定</button><button class="block-link-cancel">取消</button></span>
     <button class="block-apply" title="写入文档">应用</button>
     <button class="block-cancel" title="放弃修改 (Esc)">取消</button>`;
   el.prepend(bar);
-  el.addEventListener('focusout', onBlockFocusOut);
-  el.addEventListener('keydown', onBlockKeyDown);
-  el.addEventListener('paste', onBlockPaste);
+  rebindEditorHost(el);
   for (const btn of bar.querySelectorAll('button')) {
+    if (btn.closest('.block-link-ui')) continue; // 链接输入行的确定/取消单独接线
     btn.addEventListener('mousedown', (e) => e.preventDefault()); // 防失焦提交
     btn.addEventListener('click', (e) => { e.stopPropagation(); blockBarAction(btn); });
   }
+  const linkUi = bar.querySelector('.block-link-ui');
+  bar.querySelector('.block-link-ok').addEventListener('click', confirmLink);
+  bar.querySelector('.block-link-cancel').addEventListener('click', () => hideLinkUi(blockEditor, linkUi));
+  linkUi.querySelector('.block-link-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.stopPropagation(); confirmLink(); }
+    if (e.key === 'Escape' && !e.isComposing) {
+      e.stopPropagation(); // 只收起链接输入行，不取消整个编辑
+      hideLinkUi(blockEditor, linkUi);
+    }
+  });
   const format = bar.querySelector('.block-format');
   format.addEventListener('mousedown', (e) => e.preventDefault());
   format.addEventListener('change', () => {
     const v = format.value;
-    if (v !== 'p') document.execCommand('formatBlock', false, `<${v}>`);
+    // 手工宿主重命名（execCommand formatBlock 会丢块上的 class/data-block/监听器）：
+    // 列表先还原为段落再转目标类型；「正文」即降级为段落
+    if (v && !blockTypeGuard()) {
+      let el = blockEditor.el;
+      if (el.tagName === 'UL' || el.tagName === 'OL') unwrapList(el);
+      if (blockEditor && blockEditor.el.tagName !== v.toUpperCase()) renameHost(blockEditor.el, v);
+    }
     format.value = 'p'; // 一次性动作：执行后回位
   });
+  updateUndoButton();
 }
 
 function blockBarAction(btn) {
   if (btn.classList.contains('block-apply')) { applyBlockEdit(); return; }
   if (btn.classList.contains('block-cancel')) { cancelBlockEdit(); return; }
   if (btn.dataset.cmd === 'code') { toggleInlineCode(); return; }
-  document.execCommand(btn.dataset.cmd); // bold / italic / strikeThrough
+  if (btn.dataset.cmd === 'ul') { toggleList(false); return; }
+  if (btn.dataset.cmd === 'ol') { toggleList(true); return; }
+  if (btn.dataset.cmd === 'quote') { toggleQuote(); return; }
+  if (btn.dataset.cmd === 'link') { linkButtonAction(); return; }
+  if (btn.dataset.cmd === 'image') { insertImage(); return; }
+  document.execCommand(btn.dataset.cmd); // bold / italic / strikeThrough / removeFormat
 }
 
 // 行内代码：execCommand 无 code 命令，手动包/拆 <code>
@@ -850,9 +900,210 @@ function toggleInlineCode() {
   sel.addRange(range);
 }
 
+// ---------- 块级结构转换（列表/引用/标题层级） ----------
+// execCommand 的 formatBlock/列表命令会整体替换宿主元素并丢掉 class/data-block/监听器，
+// 故全部手工转换：建新元素 → 拷贝属性 → 搬子节点（工具条随迁）→ 重绑监听器 → 焦点回块尾
+function unbindEditorHost(el) {
+  el.removeEventListener('focusout', onBlockFocusOut);
+  el.removeEventListener('keydown', onBlockKeyDown);
+  el.removeEventListener('paste', onBlockPaste);
+}
+
+function rebindEditorHost(el) {
+  el.addEventListener('focusout', onBlockFocusOut);
+  el.addEventListener('keydown', onBlockKeyDown);
+  el.addEventListener('paste', onBlockPaste);
+}
+
+function refocusEditor(el) {
+  el.focus();
+  const s = getSelection();
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.collapse(false);
+  s.removeAllRanges();
+  s.addRange(r);
+}
+
+// 宿主整体换标签（标题/正文/引用互转、列表有序无序互换）
+function renameHost(el, tag) {
+  const b = blockEditor;
+  if (!b || b.el !== el) return;
+  unbindEditorHost(el);
+  const n = document.createElement(tag);
+  for (const a of [...el.attributes]) n.setAttribute(a.name, a.value);
+  while (el.firstChild) n.append(el.firstChild);
+  el.replaceWith(n);
+  b.el = n;
+  rebindEditorHost(n);
+  refocusEditor(n);
+}
+
+// 标注块（callout）结构特殊（标题行 + [!TYPE] 前缀），不允许块类型转换
+function blockTypeGuard() {
+  if (blockEditor && blockEditor.el.classList.contains('callout')) {
+    showStatus('标注块的块类型不能转换', true);
+    return true;
+  }
+  return false;
+}
+
+// 无序/有序列表：段落/标题/引用 → 列表（内容包进单个 li）；同款再点还原为段落；互点互换类型
+function toggleList(ordered) {
+  const b = blockEditor;
+  if (!b || b.kind !== 'rich' || blockTypeGuard()) return;
+  const el = b.el;
+  const want = ordered ? 'OL' : 'UL';
+  if (el.tagName === want) unwrapList(el);
+  else if (el.tagName === 'UL' || el.tagName === 'OL') renameHost(el, want);
+  else makeList(el, want);
+}
+
+function makeList(el, want) {
+  const b = blockEditor;
+  unbindEditorHost(el);
+  const n = document.createElement(want);
+  for (const a of [...el.attributes]) n.setAttribute(a.name, a.value);
+  const li = document.createElement('li');
+  while (el.firstChild) li.append(el.firstChild);
+  n.append(li);
+  el.replaceWith(n);
+  b.el = n;
+  rebindEditorHost(n);
+  refocusEditor(n);
+}
+
+// 列表还原为段落：各 li 内容按 <br> 连接（多 li 时即硬换行）
+function unwrapList(el) {
+  const b = blockEditor;
+  unbindEditorHost(el);
+  const p = document.createElement('p');
+  for (const a of [...el.attributes]) p.setAttribute(a.name, a.value);
+  const items = [...el.querySelectorAll(':scope > li')];
+  const bar = el.querySelector(':scope > .block-editor-bar');
+  items.forEach((li, i) => {
+    if (i) p.append(document.createElement('br'));
+    while (li.firstChild) p.append(li.firstChild);
+  });
+  el.replaceWith(p);
+  if (bar) p.prepend(bar); // 工具条回到块首
+  b.el = p;
+  rebindEditorHost(p);
+  refocusEditor(p);
+}
+
+function toggleQuote() {
+  const b = blockEditor;
+  if (!b || b.kind !== 'rich' || blockTypeGuard()) return;
+  let el = b.el;
+  if (el.tagName === 'UL' || el.tagName === 'OL') unwrapList(el); // 列表先还原再转引用
+  el = blockEditor.el;
+  renameHost(el, el.tagName === 'BLOCKQUOTE' ? 'p' : 'blockquote');
+}
+
+// ---------- 行内链接 ----------
+
+// 选区有文字 → 弹出 URL 输入行，确定后插入 [文字](url)；选区在已有链接内 → 直接移除链接
+function linkButtonAction() {
+  const b = blockEditor;
+  if (!b || b.kind !== 'rich') return;
+  const ui = b.el.querySelector('.block-link-ui');
+  if (!ui) return;
+  if (!ui.hidden) { hideLinkUi(b, ui); return; } // 再点收起
+  const sel = getSelection();
+  const anchor = sel && sel.anchorNode;
+  const node = anchor && anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor;
+  const inLink = node && b.el.contains(node) && node.closest('a');
+  if (inLink) {
+    inLink.replaceWith(document.createTextNode(inLink.textContent)); // 移除链接保留文字
+    return;
+  }
+  if (!sel || !sel.rangeCount || sel.isCollapsed) { showStatus('先选中要加链接的文字', true); return; }
+  // 输入框聚焦会把文档选区换成输入框光标：先把选区 Range 记下来，确定时用它
+  b.linkRange = sel.getRangeAt(0).cloneRange();
+  ui.hidden = false;
+  ui.querySelector('.block-link-input').focus();
+}
+
+// 收起链接输入行：焦点在其内部（输入框/确定/取消）时先移回宿主块再隐藏，
+// 否则隐藏会让焦点落空（relatedTarget=null）→ 失焦=应用 误提交并关闭编辑器
+function hideLinkUi(b, ui) {
+  if (b && ui.contains(document.activeElement)) {
+    const sel = getSelection();
+    const range = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    b.el.focus();
+    if (range) { sel.removeAllRanges(); sel.addRange(range); }
+  }
+  ui.hidden = true;
+  ui.querySelector('.block-link-input').value = '';
+}
+
+function confirmLink() {
+  const b = blockEditor;
+  if (!b) return;
+  const ui = b.el.querySelector('.block-link-ui');
+  if (!ui || ui.hidden) return;
+  const input = ui.querySelector('.block-link-input');
+  const url = input.value.trim();
+  if (!url || /\s/.test(url)) { showStatus('链接地址无效', true); input.focus(); return; }
+  const range = b.linkRange;
+  if (!range || !b.el.contains(range.commonAncestorContainer)) {
+    showStatus('选区已失效，请重新选中文字', true);
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = url;
+  a.textContent = range.toString();
+  range.deleteContents();
+  range.insertNode(a);
+  range.setStartAfter(a);
+  range.collapse(true);
+  b.linkRange = null;
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  hideLinkUi(b, ui);
+}
+
+// ---------- 插入图片 ----------
+
+let modalBusy = false; // 原生文件对话框打开期间，抑制失焦=应用（对话框会夺走焦点）
+
+async function insertImage() {
+  const b = blockEditor;
+  if (!b || b.kind !== 'rich') return;
+  modalBusy = true;
+  const picked = await window.tot.selectImage(b.tab.path);
+  modalBusy = false;
+  if (!picked || !blockEditor || blockEditor.tab !== activeTab) return; // 等待期间编辑可能已被取消/换页
+  await insertImageFromRel(picked.rel);
+}
+
+async function insertImageFromRel(rel) {
+  const b = blockEditor;
+  if (!b || b.kind !== 'rich' || !b.el.isConnected) return;
+  const [url] = await window.tot.resolveImages(b.tab.path, [rel]);
+  if (!blockEditor || !blockEditor.el.isConnected) return;
+  const img = document.createElement('img');
+  img.src = url;
+  img.dataset.origSrc = rel; // serializeBlock 按此回写源文相对路径
+  img.alt = rel.split('/').pop();
+  const sel = getSelection();
+  const r = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+  if (r && !sel.isCollapsed) r.deleteContents(); // 选中内容替换为图片
+  const rr = r || document.createRange();
+  rr.insertNode(img);
+  rr.setStartAfter(img);
+  rr.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(rr);
+  blockEditor.el.focus(); // 对话框回来焦点仍在块上
+}
+
 function onBlockFocusOut(e) {
   const b = blockEditor;
   if (!b || b.el !== e.currentTarget) return;
+  if (modalBusy) return; // 原生文件对话框打开期间不提交
   if (e.currentTarget.contains(e.relatedTarget)) return; // 焦点还在块内（工具条）
   applyBlockEdit();
 }
@@ -885,6 +1136,7 @@ function writeBlockEdit(b, newSrc) {
   b.tab.dirty = true;
   updateTabbarDirty(b.tab);
   blockEditor = null;
+  updateUndoButton();
 }
 
 // 取消：恢复原块
@@ -892,6 +1144,7 @@ function cancelBlockEdit() {
   const b = blockEditor;
   if (!b) return;
   blockEditor = null;
+  updateUndoButton();
   if (!b.el.isConnected) return;
   b.el.classList.remove('block-editing', 'code-editing');
   if (b.kind === 'rich') b.el.contentEditable = 'false';
@@ -905,6 +1158,7 @@ function flushBlockEdit() {
   const newSrc = b.kind === 'code' ? (b.el.querySelector('textarea')?.value ?? null) : serializeBlock(b.el);
   if (newSrc !== null && newSrc !== b.originalSrc) writeBlockEdit(b, newSrc);
   else blockEditor = null;
+  updateUndoButton();
 }
 
 // 编辑块 → GFM：克隆后清理编辑态产物（工具条/标题行/contenteditable），嵌套图表按位置
@@ -930,7 +1184,11 @@ function serializeBlock(el) {
     pre.append(code);
     w.replaceWith(pre);
   });
-  let md = turndown.turndown(clone);
+  // 包一层容器再序列化：turndown 对根元素自身不套规则（h4 会丢 ####、ul 会丢 - ），
+  // 宿主作为容器子节点时才会按 heading/list/blockquote/table 规则输出
+  const wrap = document.createElement('div');
+  wrap.append(clone);
+  let md = turndown.turndown(wrap);
   // 相邻同型强调（如 **a** 紧邻 **b**）序列化为 **a****b**，marked 会把星号当字面文本渲染。
   // 中间的 **** 正是「a 的收尾 ** + b 的开启 **」——删掉即合并为单一加粗 **ab**，所见即所得
   md = md.replace(/\*\*\*\*/g, '');
@@ -966,6 +1224,7 @@ function openCodeEditor(pre, idx, range, src) {
   });
   editor.querySelector('.mermaid-apply').addEventListener('click', applyBlockEdit);
   editor.querySelector('.mermaid-cancel').addEventListener('click', cancelBlockEdit);
+  updateUndoButton();
 }
 
 // ---------- Callout 标注块（> [!NOTE] 等） ----------

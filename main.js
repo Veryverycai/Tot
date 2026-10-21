@@ -193,6 +193,25 @@ ipcMain.handle('open-dropped', async (_e, p) => {
   await openByPath(p);
 });
 
+// 顶栏「撤销」按钮：与编辑菜单「撤销」（role: 'undo'）同款原生撤销
+ipcMain.on('web-undo', (e) => {
+  if (win && !win.isDestroyed() && e.sender === win.webContents) win.webContents.undo();
+});
+
+// 插入图片：系统文件选择器 → 相对当前文档路径的相对路径（渲染侧再走 resolve-images 取 mdfile URL）
+ipcMain.handle('select-image', async (e, docPath) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return null;
+  if (typeof docPath !== 'string') return null;
+  const r = await dialog.showOpenDialog(win, {
+    title: '选择图片',
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'] }],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const rel = path.relative(path.dirname(docPath), r.filePaths[0]).replace(/\\/g, '/');
+  return { rel };
+});
+
 // ---------- 图片协议 ----------
 
 function handleMdfile(request) {
@@ -369,7 +388,8 @@ let winReady = false;
 
 async function createWindow() {
   win = new BrowserWindow({
-    title: 'Tot',
+    // 标题栏显示「Tot + 版本号」（清晰当前运行版本；图标在任务栏/Alt+Tab，icon.ico 已提供）
+    title: 'Tot ' + app.getVersion(),
     icon: path.join(__dirname, 'icon.ico'),
     width: 1280,
     height: 840,
@@ -402,6 +422,8 @@ async function createWindow() {
   // TOT_CHECK 在页面里跑断言并打印 DOM 状态（树/渲染/大纲/scrollspy）后退出
   win.webContents.on('did-finish-load', async () => {
     winReady = true;
+    // index.html 的 <title>Tot</title> 会在加载时覆盖窗口标题，这里恢复「Tot + 版本号」
+    win.setTitle('Tot ' + app.getVersion());
     if (!process.env.TOT_OPEN_DIR) {
       win.webContents.send('init-tree', { drives: await listDrives() });
       // 文件关联双击：打开命令行传入的 md 文件
@@ -459,6 +481,8 @@ async function createWindow() {
             viewItems: appMenu.items[2].submenu.items.map((i) => i.label ?? i.type),
             windowItems: appMenu.items[3].submenu.items.map((i) => i.label ?? i.type),
             saveAcc: appMenu.items[0].submenu.items.find((i) => i.label === '保存')?.accelerator,
+            winTitle: win.getTitle(),
+            winTitleOk: win.getTitle() === 'Tot ' + app.getVersion(),
           }));
           await new Promise((r) => setTimeout(r, 2500));
           const check = `JSON.stringify({
@@ -484,6 +508,7 @@ async function createWindow() {
             tabs: document.querySelectorAll('.tab').length,
             activeTab: document.querySelector('.tab.active .tab-name')?.textContent ?? null,
             saveDisabled: document.querySelector('#save-btn').disabled,
+            undoBtn: (() => { const u = document.querySelector('#undo-btn'); const s = document.querySelector('#save-btn'); return { present: !!u, disabled: u?.disabled ?? null, afterSave: !!u && s.nextElementSibling === u, sameStyle: !!u && getComputedStyle(u).borderRadius === getComputedStyle(s).borderRadius }; })(),
             turndownLoaded: typeof window.TurndownService !== 'undefined' && typeof window.turndownPluginGfm !== 'undefined',
             turndownRoundtrip: (() => {
               // 与应用内 turndown 配置保持一致（emDelimiter + 删除线双波浪线覆盖），防配置漂移
@@ -543,6 +568,8 @@ async function createWindow() {
                     shellBg: [getComputedStyle(document.body).backgroundColor, getComputedStyle(document.querySelector('#topbar')).backgroundColor, getComputedStyle(document.querySelector('#viewer')).backgroundColor, getComputedStyle(document.querySelector('#tabbar')).backgroundColor],
                     preStyle: (() => { const p = getComputedStyle(document.querySelector('#viewer pre')); return { bg: p.backgroundColor, border: p.borderTopColor }; })(),
                     calloutStyle: (() => { const c = getComputedStyle(document.querySelector('#viewer .callout-note')); const t = getComputedStyle(document.querySelector('#viewer .callout-note .callout-title')); return { bg: c.backgroundColor, border: c.borderLeftColor, title: t.color }; })(),
+                    paraStyle: (() => { const p = getComputedStyle(document.querySelector('#viewer p')); return { indent: p.textIndent, align: p.textAlign, family: p.fontFamily.slice(0, 60) }; })(),
+                    thStyle: (() => { const t = getComputedStyle(document.querySelector('#viewer th')); return { borderTop: t.borderTopStyle, borderTopWidth: t.borderTopWidth, borderLeft: t.borderLeftStyle }; })(),
                   }));
                 }, 400);
               })`,
@@ -660,6 +687,7 @@ async function createWindow() {
               barCmds: [...document.querySelectorAll('#viewer .block-editor-bar [data-cmd]')].map((b) => b.dataset.cmd),
               formats: [...document.querySelectorAll('#viewer .block-editor-bar .block-format option')].map((o) => o.value),
               idx: document.querySelector('#viewer p.block-editing')?.dataset.block ?? null,
+              editStyle: (() => { const cs = getComputedStyle(document.querySelector('#viewer .block-editing')); return { outlineWidth: cs.outlineWidth, outlineStyle: cs.outlineStyle, bg: cs.backgroundColor }; })(),
             })`,
           ));
           // edit2: 键入文本 → 工具条「应用」→ dirty + 编辑器关闭
@@ -888,11 +916,217 @@ async function createWindow() {
               origKept: document.querySelector('#viewer img')?.dataset.origSrc ?? null,
             })`,
           ));
-          // edit14: 最终保存 —— 磁盘含全部修改、无被取消的修改、换行风格保持（LF）
+          // edit14: 块格式下拉 h2 → 标题 4（手工宿主重命名：属性/工具条随迁，execCommand 会丢属性）
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer [data-block]')].find((x) => x.tagName === 'H2').click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const h = document.querySelector('#viewer .block-editing');
+               const sel = h.querySelector('.block-format');
+               sel.value = 'h4'; sel.dispatchEvent(new Event('change')); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit14]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              // textContent 含工具条按钮文字，不能整体比较——只比正文文本节点
+              renamed: [...(document.querySelector('#viewer h4.block-editing')?.childNodes ?? [])].some((n) => n.nodeType === 3 && n.textContent === '第二章'),
+              attrsKept: document.querySelector('#viewer h4.block-editing')?.dataset.block !== undefined,
+              barKept: !!document.querySelector('#viewer h4.block-editing .block-editor-bar'),
+            })`,
+          ));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer h4.block-editing .block-apply').click()`);
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit14b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              rendered: [...document.querySelectorAll('#viewer h4')].some((x) => x.textContent === '第二章'),
+              editorGone: !document.querySelector('#viewer .block-editing'),
+            })`,
+          ));
+          // edit15: 无序列表 —— 段落 → 列表 → 应用回写「- 」
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.includes('这是第一段')).click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#viewer .block-editing [data-cmd="ul"]').click()`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit15]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              listed: !!document.querySelector('#viewer ul.block-editing'),
+              liHasText: document.querySelector('#viewer ul.block-editing li')?.textContent.includes('这是第一段') ?? false,
+              barKept: !!document.querySelector('#viewer ul.block-editing .block-editor-bar'),
+            })`,
+          ));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer ul.block-editing .block-apply').click()`);
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit15b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              rendered: [...document.querySelectorAll('#viewer ul li')].some((x) => x.textContent.includes('这是第一段')),
+            })`,
+          ));
+          // edit16: 列表还原 —— 段落 → 列表 → 再点还原为段落（内容不变，应用走取消路径）
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.includes('图片')).click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#viewer .block-editing [data-cmd="ul"]').click()`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit16]', await win.webContents.executeJavaScript(
+            `JSON.stringify({ listed: !!document.querySelector('#viewer ul.block-editing') })`,
+          ));
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#viewer ul.block-editing [data-cmd="ul"]').click()`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit16b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              unwrapped: !!document.querySelector('#viewer p.block-editing'),
+              textKept: document.querySelector('#viewer p.block-editing')?.textContent.includes('图片') ?? false,
+            })`,
+          ));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer p.block-editing .block-apply').click()`);
+          await new Promise((r) => setTimeout(r, 500));
+          // edit17: 引用块 —— 段落 → 引用 → 应用回写「> 」
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.startsWith('第二段')).click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#viewer .block-editing [data-cmd="quote"]').click()`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit17]', await win.webContents.executeJavaScript(
+            `JSON.stringify({ quoted: !!document.querySelector('#viewer blockquote.block-editing') })`,
+          ));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer blockquote.block-editing .block-apply').click()`);
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit17b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              rendered: [...document.querySelectorAll('#viewer blockquote')].some((x) => x.textContent.includes('第二段')),
+            })`,
+          ));
+          // edit18: 顶栏「撤销」按钮 —— 编辑中输入后点击撤销，编辑态不退出（等同编辑菜单撤销）
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.includes('加粗测试段落')).click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          console.log('[dev:edit18]', await win.webContents.executeJavaScript(
+            `JSON.stringify({ undoEnabled: !document.querySelector('#undo-btn').disabled })`,
+          ));
+          await win.webContents.executeJavaScript(
+            `{ const p = document.querySelector('#viewer .block-editing');
+               p.focus();
+               const s = getSelection(); const r = document.createRange();
+               r.selectNodeContents(p); r.collapse(false);
+               s.removeAllRanges(); s.addRange(r);
+               document.execCommand('insertText', false, '撤销测试');
+               document.querySelector('#undo-btn').click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          console.log('[dev:edit18b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              undone: !(document.querySelector('#viewer .block-editing')?.textContent.includes('撤销测试') ?? false),
+              editorKept: !!document.querySelector('#viewer .block-editing'),
+            })`,
+          ));
+          await win.webContents.executeJavaScript(
+            `document.querySelector('#viewer .block-editing')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          // edit19: 清除格式 —— 第二处「加粗」去粗体 → 应用后仅第一处保留
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.includes('加粗测试段落')).click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const p = document.querySelector('#viewer .block-editing');
+               const target = [...p.querySelectorAll('strong')].find((s) => s.textContent === '加粗');
+               const s = getSelection(); const r = document.createRange();
+               r.selectNodeContents(target); s.removeAllRanges(); s.addRange(r);
+               p.querySelector('[data-cmd="removeFormat"]').click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit19]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              secondUnbolded: [...document.querySelectorAll('#viewer .block-editing strong')].every((s) => s.textContent !== '加粗'),
+              firstKept: [...document.querySelectorAll('#viewer .block-editing strong')].some((s) => s.textContent === '这是加粗'),
+            })`,
+          ));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .block-editing .block-apply').click()`);
+          await new Promise((r) => setTimeout(r, 500));
+          // edit20: 行内链接 —— 选中「图片：」→ 链接 UI → 确定 → 应用回写 [文字](url)
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.includes('图片')).click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          await win.webContents.executeJavaScript(
+            `{ const p = document.querySelector('#viewer .block-editing');
+               const tn = [...p.childNodes].find((n) => n.nodeType === 3 && n.textContent.includes('图片'));
+               const s = getSelection(); const r = document.createRange();
+               r.selectNodeContents(tn); s.removeAllRanges(); s.addRange(r);
+               p.querySelector('[data-cmd="link"]').click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit20]', await win.webContents.executeJavaScript(
+            `JSON.stringify({ uiShown: !document.querySelector('#viewer .block-editing .block-link-ui').hidden })`,
+          ));
+          await win.webContents.executeJavaScript(
+            `{ const ui = document.querySelector('#viewer .block-editing .block-link-ui');
+               ui.querySelector('.block-link-input').value = 'https://example.com';
+               ui.querySelector('.block-link-ok').click(); }`,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          console.log('[dev:edit20b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              linked: document.querySelector('#viewer .block-editing a')?.getAttribute('href') === 'https://example.com',
+              uiHidden: document.querySelector('#viewer .block-editing .block-link-ui').hidden,
+            })`,
+          ));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .block-editing .block-apply').click()`);
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('[dev:edit20c]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              rendered: [...document.querySelectorAll('#viewer a')].some((x) => x.getAttribute('href') === 'https://example.com'),
+            })`,
+          ));
+          // edit21: 插入图片 —— 相对路径插入走既有 resolve-images（文件选择器留打包冒烟手动过）
+          await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('#viewer p[data-block]')].find((x) => x.textContent.includes('图片')).click()`,
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          console.log('[dev:edit21]', await win.webContents.executeJavaScript(
+            `JSON.stringify({ apiPresent: typeof window.tot.selectImage === 'function' })`,
+          ));
+          await win.webContents.executeJavaScript(
+            `{ const p = document.querySelector('#viewer .block-editing');
+               p.focus();
+               const s = getSelection(); const r = document.createRange();
+               r.selectNodeContents(p); r.collapse(false);
+               s.removeAllRanges(); s.addRange(r);
+               insertImageFromRel('a.png'); }`,
+          );
+          await new Promise((r) => setTimeout(r, 600));
+          console.log('[dev:edit21b]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              imgInserted: [...document.querySelectorAll('#viewer .block-editing img')].some((x) => x.dataset.origSrc === 'a.png'),
+            })`,
+          ));
+          await win.webContents.executeJavaScript(`document.querySelector('#viewer .block-editing .block-apply').click()`);
+          await new Promise((r) => setTimeout(r, 600));
+          console.log('[dev:edit21c]', await win.webContents.executeJavaScript(
+            `JSON.stringify({
+              rendered: [...document.querySelectorAll('#viewer img')].some((x) => x.dataset.origSrc === 'a.png'),
+            })`,
+          ));
+          // edit22: 最终保存 —— 磁盘含全部修改、无被取消的修改、换行风格保持（LF）
           await win.webContents.executeJavaScript(`document.querySelector('#save-btn').click()`);
           await new Promise((r) => setTimeout(r, 700));
           const final = await fs.readFile(editFile, 'utf8');
-          console.log('[dev:edit14]', JSON.stringify({
+          console.log('[dev:edit22]', JSON.stringify({
             hasRichMarker: final.includes('TOT编辑段落'),
             hasBold: final.includes('**这是加粗**'),
             hasBlur: final.includes('X第二段') || final.includes('测试出现第二次。X'),
@@ -903,21 +1137,28 @@ async function createWindow() {
             delTildeKept: final.includes('~~这是删除线~~'),
             hasCode: final.includes('新代码'),
             hasImg: final.includes('![图](a.png)'),
+            hasH4: final.includes('#### 第二章'),
+            hasList: final.includes('-   这是第一段'),
+            hasQuote: final.includes('> 第二段：测试出现第二次。X'),
+            hasLink: final.includes('[图片：](https://example.com)'),
+            hasImg2: final.includes('![a.png](a.png)'),
+            secondBoldGone: !final.includes('**加粗**测试也在这里'),
+            undoCancelled: !final.includes('撤销测试'),
             hasOldCode: !final.includes("console.log('测试')"),
             pasteCancelled: !final.includes('纯文本粘贴'),
             escCancelled: !final.includes('Y第二段'),
             lfKept: !final.includes('\r'),
             dirtyGone: await win.webContents.executeJavaScript(`document.querySelector('.tab.active .tab-dirty').hidden`),
           }));
-          // edit15: 经 write-file IPC 恢复原内容，测试数据零污染
+          // edit23: 经 write-file IPC 恢复原内容，测试数据零污染
           await win.webContents.executeJavaScript(
             `window.tot.writeFile(${JSON.stringify(editFile)}, ${JSON.stringify(before)})`,
           );
           await new Promise((r) => setTimeout(r, 300));
           const restored = await fs.readFile(editFile, 'utf8');
-          console.log('[dev:edit15]', JSON.stringify({ restored: restored === before }));
-          // edit16: 越界路径被拒
-          console.log('[dev:edit16]', JSON.stringify({
+          console.log('[dev:edit23]', JSON.stringify({ restored: restored === before }));
+          // edit24: 越界路径被拒
+          console.log('[dev:edit24]', JSON.stringify({
             result: await win.webContents.executeJavaScript(
               `window.tot.writeFile('C:/Windows/System32/tot-test.txt', 'x').then(() => 'ok', (e) => 'err')`,
             ),

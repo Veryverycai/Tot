@@ -8,7 +8,7 @@
 
 1.1 成功标准（全部满足才算完成）：
 
-1. 窗口标题 Tot；顶栏无文字/无打开文件夹按钮；菜单栏 文件/编辑/视图/窗口（文件含打开文件 Ctrl+O、打开文件夹 Ctrl+Shift+O、保存 Ctrl+S；窗口含关于 Tot 与 MIT 许可协议）
+1. 窗口标题 Tot + 版本号（清晰当前运行版本，随 package.json 自动）；顶栏无文字/无打开文件夹按钮；菜单栏 文件/编辑/视图/窗口（文件含打开文件 Ctrl+O、打开文件夹 Ctrl+Shift+O、保存 Ctrl+S；窗口含关于 Tot 与 MIT 许可协议）
 2. 多标签页：打开多个文件成 tab，开关切换滚动恢复、dirty 关闭确认、全部关闭回空态
 3. 编辑（预览即编辑，1.2.0 修订）：无「编辑/预览」切换与双栏——应用只有预览一个界面；点击文本块富文本所见即所得就地编辑（格式随改随显，应用后按 GFM 回写源文）、代码围栏与图表在图框内改源码（图表带实时预览）；Ctrl+S 或顶栏保存按钮落盘（active tab dirty 时可用，按原文件换行风格还原）；dirty 回显、越界路径拒写
 4. 搜索：Ctrl+F 文件内查找，高亮/计数/上下跳转，重渲染后自动重应用
@@ -34,7 +34,7 @@
 md-browser/
 ├── package.json      # devDependencies: electron, electron-builder；main → main.js
 ├── main.js           # 主进程：窗口/菜单、目录扫描、文件读写、mdfile:// 协议、config、dev 验证钩子
-├── preload.js        # contextBridge 暴露 7 个白名单 API
+├── preload.js        # contextBridge 暴露 15 个白名单 API
 ├── renderer/
 │   ├── index.html    # 顶栏(搜索条+保存按钮+风格选择) + 左栏(文件树+大纲) + tab 条 + 预览正文
 │   ├── app.js        # 多标签页、就地编辑（富文本 + 代码/图表）、查找、大纲/scrollspy、拖拽、12 套风格注册表
@@ -54,7 +54,7 @@ md-browser/
 ### 进程分工
 
 - **主进程**：原生菜单（menu-command 推送）、目录/文件对话框、盘符枚举 + 单层扫描 scan-children（只收 .md/.markdown 与子目录，跳过点开头目录与系统缓存目录）、readFile/writeFile/mdfile 按需读写（knownDirs 链条式信任边界——渲染层只能扩展已见过的目录）、config.json 存最近打开
-- **preload**：contextBridge 白名单 13 个 API
+- **preload**：contextBridge 白名单 15 个 API
 - **渲染进程**：全部 UI 逻辑（树懒加载 + 路径聚焦、面板互斥、标签页/编辑/搜索/大纲）
 
 ### 多标签页
@@ -160,6 +160,18 @@ md-browser/
 - 安装包：升级时先卸载再安装——build/installer.nsh customInit 结束运行中的 Tot.exe（精确镜像名，不误杀便携版）+ 枚举 HKCU 卸载注册表静默卸载旧版（卸载后索引前移重新枚举）；package.json nsis.include
 - 验证：[dev:mermaid1-8] 渲染/序号/错误态（坏语法 + 拼错图型名 chart TD）/泄漏清理（bodyLeak=0）/搜索排除/重主题/编辑-预览-取消/应用 dirty/保存 CRLF 还原/错误态修复（7c 坏语法、7d 拼错图型名）/fixture 还原（dirty 断言读激活 tab 的指示器，多 tab 下编辑非首个 tab 亦成立）；[dev:search6-6d] IME 合成 Enter/Esc 忽略 + 真实键位对照；[dev:check1] 新增 delCheck（表格原文 1~6 纯文本显示、delCount=1 且仅 `~~删除线~~`）+ 波浪号 fixture；[dev:block1-N]（TOT_EDIT 重写，双栏套件作废）富文本就地编辑：段落加粗/斜体/删除线/行内代码/改标题应用回写 GFM（`**`/`_`/`~~`/反引号）与重渲染一致、表格单元格改文字回写管道表、callout 改正文保留 `[!NOTE]` 标题行、图片 src 回写相对路径、失焦应用、Esc 取消、粘贴纯文本、dirty、Ctrl+S 落盘 CRLF 还原、关闭确认、越界拒写、连续多块编辑后序号仍准、代码围栏仍源码编辑、进入编辑自动关搜索；升级链路实测（打包轮）
 
+## 1.2.1 修正（正文编辑框丰富 / 顶栏撤销）
+
+- 工具条扩展：格式下拉 p/h1-h6 + 清除格式（Tx）+ 无序/有序列表 + 引用块 + 行内链接 + 插入图片；格式下拉一次性动作（执行后回位 p）
+- 块级结构转换全部手工做（execCommand 的 formatBlock/列表命令会整体替换宿主元素，丢掉 data-block/class/监听器）：renameHost（解绑 → 建新元素 → 拷属性 → 搬子节点工具条随迁 → replaceWith → 重绑 → 焦点回块尾）；列表互转 unwrapList/makeList（li 内容以 <br> 接回段落）；引用 toggleQuote（列表先还原）；callout 块类型不可转换（blockTypeGuard 提示）
+- 序列化修正：turndown 对根元素自身不套规则——包一层 div 再序列化（此前 h4 根丢 `####`、ul 根丢 `- ` 的根因）；相邻同型强调 `****` 合并
+- 行内链接：点 🔗 时把选区 Range 记到 blockEditor.linkRange（URL 输入框聚焦会把文档选区吞成输入框光标，确定时读现场选区必丢）；hideLinkUi 收起输入行前先移焦点回宿主块（隐藏聚焦中的输入框会让焦点落空 → 失焦=应用 误提交并关闭编辑器）；URL 非空无空白校验、锚点内选区直接移除链接保留文字
+- 插入图片：select-image IPC（主进程 dialog 图片过滤，返回相对当前文档路径的 / 分隔相对路径）→ resolveImages 取 mdfile URL → img.dataset.origSrc 供序列化回写相对路径；modalBusy 抑制原生对话框期间的失焦=应用
+- 顶栏撤销：保存按钮旁 #undo-btn，与编辑菜单「撤销」同款原生撤销（web-undo IPC → webContents.undo()），仅编辑中可用（updateUndoButton 随编辑器与焦点启停，mousedown preventDefault 防按钮夺焦触发失焦应用）
+- 编辑态更明显：.block-editing 升级为 2px 蓝描边 + 浅蓝底 tint（rgba(9,105,218,0.08)，明暗主题通用）+ 圆角，与目录树选中项同色系
+- 进编辑更顺滑：findBlockRange 的词法结果按 tab.text 缓存（单条 lexCache，文本变化自然失效）——同一文档连续点块进编辑不再每次全量 marked.lexer
+- 验证：[dev:edit1] 新增 editStyle 计算样式断言（outlineWidth 2px / solid / rgba 蓝底）；[dev:edit14-14b] h4 转换与 `#### 第二章` 回写；[dev:edit15-16b] 列表互转回写 `-   这是`（gfm 前缀 3 空格）；[dev:edit17-17b] 引用块回写 `> `；[dev:edit18-18b] 撤销按钮生效且编辑态保持；[dev:edit19] 清除格式；[dev:edit20-20c] 行内链接插入 `[图片：](https://example.com)` 回写；[dev:edit21-21c] 插图片回写 `![a.png](a.png)`；[dev:edit22-24] 最终落盘全量断言（LF 保持、取消项不落盘）+ fixture 还原 + 越界拒写；TOT_CHECK undoBtn 断言 + TOT_SEARCH/TOT_MERMAID/TOT_TABS 回归
+
 ## 已知限制（1.1）
 
 - BOM 丢失：读文件按 utf8 解码，带 BOM 的 md 保存后 BOM 不保留（内容不变）
@@ -171,7 +183,7 @@ md-browser/
 
 - md 相对链接跳转（点 `[xxx](other.md)` 打开对应文件）
 - 全文搜索（跨文件）
-- 更多风格（GitLab/MDN/Logseq/学术论文/思源宋体/报纸等）
+- 更多风格（GitLab/MDN/Logseq/学术论文/思源宋体等）
 
 ## 风险与前提
 

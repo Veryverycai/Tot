@@ -32,7 +32,7 @@ body {
 
 #controls { display: flex; align-items: center; gap: 10px; }
 
-#save-btn {
+#save-btn, #undo-btn {
   padding: 6px 14px;
   border: 1px solid #d1d9e0;
   border-radius: 6px;
@@ -42,10 +42,10 @@ body {
   font: inherit;
 }
 
-#save-btn:hover { background: #eef1f4; }
+#save-btn:hover, #undo-btn:hover { background: #eef1f4; }
 
-#save-btn:disabled { opacity: 0.5; cursor: default; }
-#save-btn:disabled:hover { background: #fff; }
+#save-btn:disabled, #undo-btn:disabled { opacity: 0.5; cursor: default; }
+#save-btn:disabled:hover, #undo-btn:disabled:hover { background: #fff; }
 
 #save-status { font-size: 13px; color: #2da44e; }
 #save-status.error { color: #cf222e; }
@@ -192,8 +192,10 @@ mark.tot-search.current { background: #ffb300; color: #1f2328; }
 
 #viewer .block-editing {
   position: relative;
-  outline: 1px solid #0969da;
-  outline-offset: 2px;
+  outline: 2px solid #0969da;
+  outline-offset: 1px;
+  background: rgba(9, 105, 218, 0.08); /* 与目录树选中项同色系的浅蓝底，明暗主题通用 */
+  border-radius: 4px;
   cursor: text;
 }
 
@@ -237,6 +239,23 @@ mark.tot-search.current { background: #ffb300; color: #1f2328; }
 .block-editor-bar .block-format {
   max-width: 76px;
   padding: 2px 4px;
+  border: 1px solid #d1d9e0;
+  border-radius: 4px;
+  font: inherit;
+}
+
+/* 行内链接输入行（点链接按钮后出现） */
+.block-editor-bar .block-link-ui {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.block-editor-bar .block-link-ui[hidden] { display: none; }
+
+.block-editor-bar .block-link-input {
+  width: 180px;
+  padding: 2px 6px;
   border: 1px solid #d1d9e0;
   border-radius: 4px;
   font: inherit;
