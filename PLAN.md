@@ -37,7 +37,7 @@ md-browser/
 ├── preload.js        # contextBridge 暴露 15 个白名单 API
 ├── renderer/
 │   ├── index.html    # 顶栏(搜索条+保存按钮+风格选择) + 左栏(文件树+大纲) + tab 条 + 预览正文
-│   ├── app.js        # 多标签页、就地编辑（富文本 + 代码/图表）、查找、大纲/scrollspy、拖拽、12 套风格注册表
+│   ├── app.js        # 多标签页、就地编辑（富文本 + 代码/图表）、查找、大纲/scrollspy、拖拽、13 套风格注册表
 │   ├── base.css      # 应用布局与控件样式（与渲染风格无关的部分）
 │   └── styles/       # 手写渲染风格（每套 = 正文排版，7 套暗色另含外壳配色块）
 └── lib/              # 全部第三方 vendored 文件
@@ -59,17 +59,18 @@ md-browser/
 
 ### 多标签页
 
-- `tabs: [{id, path, name, text, dirty, mode, lineEnding, scrollTop, el}]`；单 #viewer 复用；openFile 已开则激活否则新开；**序号令牌**防慢 readFile 晚到覆盖当前 tab
+- `tabs: [{id, path, name, text, savedText, undoStack, redoStack, dirty, mode, lineEnding, scrollTop, el}]`；单 #viewer 复用；openFile 已开则激活否则新开；**序号令牌**防慢 readFile 晚到覆盖当前 tab
 - 关闭激活 tab 切邻居；dirty 关闭 → 自绘 #close-confirm 浮条（不用 window.confirm——同步阻塞会挂死自动化）
 - 切换 tab：缓存 text 重渲染 → outline → 恢复 scrollTop → 树 active 恢复
 
 ### 编辑与保存（1.2.0 修订：预览即编辑）
 
 - 单一预览界面：删除「编辑/预览」切换按钮与双栏（#editor / #edit-viewer / mode 状态机 / editTimer）
-- 文本块富文本就地编辑（contenteditable）：点击段落/标题/引用（含 callout）/列表/表格/hr → 块直接变为可编辑，格式随改随显；浮动工具条（加粗/斜体/删除线/行内代码/格式 p·h1–h3/完成/取消——execCommand，行内代码手动包 `<code>`）；失焦 = 应用（块 HTML → GFM，vendored turndown + turndown-plugin-gfm 序列化后回写源文区间）、Esc = 取消、粘贴按纯文本；callout 只编辑正文（`[!NOTE]` 标题行由原源文区间保留重建）；同时只开一个编辑器（与图表/代码编辑器互斥）；有文本选区时不触发；进入编辑前自动关闭搜索
+- 文本块富文本就地编辑（contenteditable）：点击段落/标题/引用（含 callout）/列表/表格/hr → 块直接变为可编辑，格式随改随显；浮动工具条（加粗/斜体/删除线/行内代码/格式 p·h1–h3/完成/取消——execCommand，行内代码手动包 `<code>`）；点块外空白/失焦 = 应用（块 HTML → GFM，vendored turndown + turndown-plugin-gfm 序列化后回写源文区间）、Esc = 取消、粘贴按纯文本；callout 只编辑正文（`[!NOTE]` 标题行由原源文区间保留重建）；同时只开一个编辑器（与图表/代码编辑器互斥）；有文本选区时不触发；进入编辑前自动关闭搜索
 - 块定位：渲染时给顶层可编辑块依次加 `data-block` 序号；应用时 `marked.lexer(tab.text)` 按同过滤类型（heading/paragraph/blockquote/list/table/code/hr；html 与 space 两侧同跳过）顺序游标用 token.raw 定位源码区间；写回 = 区间替换 + \n 归一；每次重渲染后序号重算
 - 代码围栏与图表编辑（保持图框内源码编辑）：源码 textarea + 图表 300ms debounce 实时预览 + 应用/取消/Esc
 - 保存唯一入口 = 菜单 Ctrl+S 与顶栏保存按钮（同一函数；active tab dirty 时可用）：写盘按 tab.lineEnding 还原 \r\n/\n；渲染层**不监听** Ctrl+S 防菜单 accelerator 双触发；保存前 flush 未应用修改
+- 撤销/重做（1.2.5）：块/图表提交只改内存不写盘；按 tab 快照栈（≤ 50 步）支持退出后整块回退——顶栏撤销、编辑菜单撤销、Ctrl+Z 统一路由（编辑区内仍为原生逐字撤销），dirty 以最近一次保存文本重算
 
 ### 查找（Ctrl+F）
 
@@ -85,12 +86,12 @@ md-browser/
 ### Callout 标注块
 
 - blockquote 首段 `[!NOTE/TIP/IMPORTANT/WARNING/CAUTION]` 转 `.callout.callout-<type>`：彩色标题行（emoji + 中文标签）+ rgba 半透明底 + 主题色边框
-- 亮色 5 套共用 styles/callouts.css，暗色 7 套共用 styles/callouts-dark.css（rgba 底在任何风格背景上自然融合）；选择器 `body[class]`（属性选择器 = 类级特异性）压过各风格 blockquote 规则
+- 亮色 6 套共用 styles/callouts.css，暗色 7 套共用 styles/callouts-dark.css（rgba 底在任何风格背景上自然融合）；选择器 `body[class]`（属性选择器 = 类级特异性）压过各风格 blockquote 规则
 
-### 风格注册表（12 套）
+### 风格注册表（13 套）
 
 - `STYLES = [{id, group, label, files[]}]` 单一数据源；惰性创建 `<link data-style-id>`，applyStyle 只 enabled 当前 id 的 link + body.className + localStorage；style-select 的 optgroup 由注册表生成
-- 分组：GitHub（github-light/github-dark）、极简（minimal）、文档（rtd/notion-light/notion-dark/typora-white/typora-night/obsidian）、代码编辑器（dracula/nord/monokai）
+- 分组：GitHub（github-light/github-dark）、极简（minimal）、文档（rtd/notion-light/notion-dark/typora-white/typora-night/obsidian/newspaper）、代码编辑器（dracula/nord/monokai）
 - 旧 localStorage 值 light/dark 经 LEGACY 映射迁移并回写
 
 ### 面板拖拽
@@ -105,7 +106,7 @@ md-browser/
 
 ### 菜单
 
-- 文件（打开文件/打开文件夹/保存/退出）、编辑（撤销/重做/剪切/复制/粘贴/全选，role 实现）、视图（重新加载/缩放/全屏/开发者工具，role 实现）、窗口（最小化/关闭/关于 Tot/ MIT 许可协议对话框）
+- 文件（打开文件/打开文件夹/保存/退出）、编辑（撤销/重做走 menu-command 路由到渲染层——编辑区内原生逐字、退出后文档级快照；剪切/复制/粘贴/全选 role 实现）、视图（重新加载/缩放/全屏/开发者工具，role 实现）、窗口（最小化/关闭/关于 Tot/ MIT 许可协议对话框）
 
 ## 里程碑与验证点
 
@@ -178,6 +179,51 @@ md-browser/
 - 修复：applyBlockEdit/flushBlockEdit 的「没改动视同取消」改用 blockEditUnchanged——先比去尾换行的字符串，不等时双方 marked 渲染后比「结构签名 + 文本」（fold 空白）：签名含每个元素的直接文本，加粗范围移动（文本节点归属变化）必不同，纯 tag 序列会漏判；签名相同 + 文本相同才视为无改动
 - 顺带修正：fixture 清理模式改为直接删 `TOT编辑段落`（此前 `\nTOT编辑段落` 匹配不到行尾污染，套件中途崩掉后污染永续）
 - 验证：新 TOT_DBL 套件（9 块型矩阵：普通/相邻星号/软换行/混排行内/删除线/列表/引用/标题/表格，单击进编辑 → dblclick → 选中词 → 移焦退出）全部 changed:false + dirty:false；TOT_EDIT 全绿（edit6 加粗/19 清格式/22 落盘断言与基线一致）；TOT_CHECK/SEARCH/MERMAID/TABS 回归绿
+
+### 打包轮（1.2.2）
+
+- 实现 commit dc10055 + 打包 commit 3275c62（版本号 1.2.1 → 1.2.2 + README「进编辑不改内容退出不写回」）
+- 冒烟：win-unpacked（TOT_DBL 10 / TOT_EDIT 37 / TOT_CHECK 4 全绿）；升级链路 1.2.1 → 1.2.2（旧进程被杀、注册表单一 DisplayName=Tot 1.2.2、装后 TOT_CHECK 绿、静默卸载目录/注册表/进程全净）；便携版 stub+4 子进程存活、按 stub PID 树杀清理
+- 发布：tag v1.2.2 + push + Release（资产字节数一致）
+
+## 1.2.3 修正（CRLF 文件块区间漂移 / 串块）
+
+- 现象：Windows 换行（CRLF）的 md 里，退出正文编辑后再点粗体标题，前一段正文被改写/变粗；同一根因下「进编辑不改内容退出」也会被误判为有改动而写回并标脏——即此前未能复现的「双击正文退出文字变粗体」（当时 fixture 全为 LF，故测不出）
+- 根因：marked.lexer 词法时把 CRLF 归一成 LF，token.raw 及其长度按 LF 计；findBlockRange 却拿这些长度在仍含 CRLF 的 tab.text 上累计偏移——每经过一个 CRLF，块区间前移 1 字符，越靠后的块偏得越多。退出编辑按错位区间写回（吞掉块前空行、块尾字符重复，如「…文字。字。」），编辑标题则把标题源码写进上一段（正文出现 ** / 串行）
+- 修复：openFile 读入后把 tab.text 统一为 \n（lineEnding 在归一前判定，保存仍按 lineEnding 还原）——与 marked 词法、块回写、Mermaid 写回全部按 LF 的既有设计一致；顺带修正 CRLF 文件保存时 `split('\n').join('\r\n')` 在原 tab.text 仍含 CRLF 时产生双 CR 的问题
+- 验证：CDP 真实鼠标事件驱动（临时驱动脚本已清理）+ CRLF fixture：①正文进编辑 Esc 退出 → 源文不变、不脏；②标题进编辑直接应用 → 区间精确（H2 editorSrc=`## **粗体标题**`，range 32–43），源文不变；③标题选中点 B → 只改标题，正文不变且无 strong；④前一段退出后编辑后一段加粗 → 仅后一段变粗；⑤保存落盘仍为 CRLF（无双 CR），fixture 还原；LF 文档归一为空操作，行为不变；node --check main.js / renderer/app.js 通过；既有 TOT_* 套件未重复跑（其 fixture 不在仓库内）
+
+## 1.2.4 修正（正文编辑改为点块外即退出）
+
+- 现象：点开正文编辑后，点页面其他空白区域不会退出编辑，只能点工具条「应用/取消」（或 Esc）
+- 根因：退出原本只依赖块的 focusout。点开编辑时块并未自动获得焦点（需再点进正文才有光标），此时点空白没有焦点可失、不产生任何事件；且空白区域能否夺焦依赖浏览器实现，行为不确定
+- 修复：document 捕获阶段监听 pointerdown——块编辑打开时，凡 pointerdown 落在编辑块外即 applyBlockEdit（无改动按未改动退出、不标脏）；块内（含浮动工具条）点击不受影响；顶栏撤销按钮豁免（需保留焦点做原生撤销）。仅作用于富文本块，code/图表编辑器的「应用/取消」显式语义不变
+- 验证：CDP 真实鼠标事件驱动（临时驱动脚本已清理），LF 与 CRLF fixture 各 8 项全过：①单击开编辑（未聚焦）→ 点空白退出且不脏；②聚焦输入后点空白 → 应用退出、源文更新；③点工具条加粗不退出；④点撤销按钮不退出；⑤Esc 取消退出；⑥点另一段 → 退出且仅前段变、后段原样（1.2.3 回归）；node --check main.js / renderer/app.js 通过
+
+### 打包轮（1.2.4）
+
+- 版本号 1.2.2 → 1.2.4（package.json；README 下载项/功能行/用法表同步：点块外空白即应用退出、CRLF 文件不再块区间错位/串块）
+- 构建：electron-builder 默认重新下载 Electron 发行包，当前网络连 GitHub 超时 → 改用本地已解压发行目录：`electron-builder --config.electronDist=node_modules/electron/dist --publish never`
+- 产物：Tot 1.2.4.exe（便携，112,731,414 B）、Tot Setup 1.2.4.exe（安装，113,012,749 B）+ blockmap、latest.yml（version 1.2.4）；旧 1.2.2 产物已删
+- 冒烟：win-unpacked 窗口标题 Tot 1.2.4 / VersionInfo 1.2.4.0、进程树杀净；便携版解压后 4 进程、标题 Tot 1.2.4、stub 树杀无残留、临时解压目录已清理
+- 本轮仅打包：未 commit / 未 tag / 未发布
+
+## 1.2.5 修正（正文编辑退出后可撤销 / 退出不写盘）
+
+- 现象：退出正文编辑（点块外空白/失焦）后内容已改，但 Ctrl+Z、顶栏撤销、编辑菜单撤销都没反应，无法退回编辑前；退出这一步又像「自动保存」
+- 根因：退出即提交（块 HTML → GFM 回写源文并重渲染），而撤销只有原生一条——原生撤销栈绑定在 contenteditable 上，重渲染销毁编辑 DOM 时一起销毁；编辑菜单用的是 role，只在焦点编辑区内生效；退出后既无焦点编辑区也无原生栈
+- 修复：按 tab 记整篇文本快照（≤ 50 步，redo 链随新编辑作废），块/图表提交前压栈；顶栏撤销、编辑菜单撤销、Ctrl+Z 统一走文档级历史，撤销/重做重渲染并恢复滚动位置；dirty 改以「最近一次保存的文本」为基准重算（撤回保存前 = 重新变脏）；退出编辑仍只改内存，Ctrl+S / 顶栏保存才落盘
+- 按键路由：编辑菜单 撤销/重做 去掉 role，改 menu-command 推送并 `registerAccelerator: false`（只显示快捷键）——按键统一由渲染层分发：焦点在编辑区（块/图表/输入框）时保持 Chromium 原生逐字撤销，退出后走文档级快照，避免菜单与渲染层各撤一次；Ctrl+Y 兜底重做
+- 验证：CDP 真实鼠标/键盘驱动（临时驱动脚本已清理），LF 与 CRLF fixture 各 9 项全过：①退出后应用+标脏+未写盘+可撤销；②Ctrl+Z 整块回退、不脏、按钮变灰、可重做；③Ctrl+Y 重做；④保存后不脏且已写盘；⑤撤销保存前 = 重新变脏且磁盘不动；⑥编辑菜单重做回保存态不脏；⑦菜单撤销回退第二段；⑧编辑区内 Ctrl+Z 只退一步、编辑器不关闭、撤销栈不变；⑨fixture 还原；node --check main.js / preload.js / renderer/app.js 通过
+- 补入报纸风格 renderer/styles/newspaper.css：STYLES 已引用「报纸」但文件此前未入库（打包版有此文件、仓库缺），本次随版入库
+
+### 打包轮（1.2.5）
+
+- 版本号 1.2.4 → 1.2.5（package.json；README 下载项 Tot 1.2.5.exe / Tot Setup 1.2.5.exe 同步，功能行/用法表含退出编辑可撤销/不写盘、13 套风格）
+- 构建：`electron-builder --config.electronDist=node_modules/electron/dist --publish never`（本地 Electron 发行目录，避开 GitHub 下载超时）
+- 产物：Tot 1.2.5.exe（便携，112,732,432 B）、Tot Setup 1.2.5.exe（安装，113,013,770 B）+ blockmap（119,592 B）、latest.yml（version 1.2.5）；旧 1.2.4 安装产物已删（便携 exe 被运行中的旧版占用，dist 不入库）
+- 冒烟：win-unpacked 窗口标题 Tot 1.2.5 / VersionInfo 1.2.5（ProductVersion 1.2.5.0）、进程树杀净；便携版（独立 userData 规避单实例转发）解压后 stub + 主进程 + 3 子进程、标题 Tot 1.2.5、stub 树杀无残留、临时解压目录已清理
+- 发布：commit + tag v1.2.5 + push origin main / v1.2.5
 
 ## 已知限制（1.1）
 

@@ -1,7 +1,7 @@
 {
   "name": "tot",
   "productName": "Tot",
-  "version": "1.2.2",
+  "version": "1.2.5",
   "description": "Tot — Trail of Tears：本地 Markdown 文件浏览器",
   "author": "Tot",
   "main": "main.js",
