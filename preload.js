@@ -35,4 +35,12 @@ contextBridge.exposeInMainWorld('tot', {
   selectImage: (docPath) => ipcRenderer.invoke('select-image', docPath),
   // 原生菜单栏明暗跟随渲染风格
   setTheme: (dark) => ipcRenderer.invoke('set-theme', dark),
+  // 会话：标签页变化时上报（关闭后下次启动据此询问是否恢复）
+  saveSession: (data) => ipcRenderer.send('save-session', data),
+  // 主进程通知：上次关闭前有打开的文件，询问是否恢复
+  onSessionOffer: (cb) => ipcRenderer.on('session-offer', (_e, data) => cb(data)),
+  // 用户点「恢复」：主进程过滤已删除文件并放行父目录
+  restoreSession: (paths) => ipcRenderer.invoke('restore-session', paths),
+  // 用户点「忽略」：清空会话记录
+  dismissSession: () => ipcRenderer.send('dismiss-session'),
 });

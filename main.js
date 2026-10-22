@@ -64,17 +64,20 @@ async function scanChildren(dir) {
   return entries;
 }
 
-// 枚举存在的盘符（A-Z），作为「我的电脑」根节点下的顶层
+// 枚举存在的盘符（A-Z），作为「我的电脑」根节点下的顶层。
+// 并行探测：冷启动（双击 md 打开）时这段在首屏之前，串行 26 次 access 会白白拖慢窗口
 async function listDrives() {
-  const drives = [];
-  for (let c = 65; c <= 90; c++) {
-    const letter = String.fromCharCode(c);
+  const letters = [];
+  for (let c = 65; c <= 90; c++) letters.push(String.fromCharCode(c));
+  const found = await Promise.all(letters.map(async (letter) => {
     try {
       await fs.access(`${letter}:\\`);
-      drives.push({ name: `${letter}:\\`, path: `${letter}:\\`, type: 'dir' });
-    } catch {}
-  }
-  return drives;
+      return { name: `${letter}:\\`, path: `${letter}:\\`, type: 'dir' };
+    } catch {
+      return null;
+    }
+  }));
+  return found.filter(Boolean);
 }
 
 // ---------- 路径边界 ----------
@@ -111,18 +114,33 @@ async function loadConfig() {
   }
 }
 
-async function saveConfig(patch) {
-  const cfg = { ...(await loadConfig()), ...patch };
-  await fs.mkdir(path.dirname(configPath()), { recursive: true });
-  await fs.writeFile(configPath(), JSON.stringify(cfg, null, 2), 'utf8');
+// 写入串行化：最近打开、会话快照、菜单刷新可能并发触发（打开多个文件时尤其明显），
+// 并发「读-改-写」会互相覆盖，导致刚记下的路径丢失
+// 原子写：先写 .tmp 再 rename——退出瞬间 beforeunload 的异步写可能被进程中断，
+// 直接 writeFile 会先把 config.json 截断成 0 字节
+let configQueue = Promise.resolve();
+function saveConfig(patch) {
+  configQueue = configQueue.then(async () => {
+    const cfg = { ...(await loadConfig()), ...patch };
+    await fs.mkdir(path.dirname(configPath()), { recursive: true });
+    const tmp = configPath() + '.tmp';
+    await fs.writeFile(tmp, JSON.stringify(cfg, null, 2), 'utf8');
+    await fs.rename(tmp, configPath());
+  }).catch(() => {});
+  return configQueue;
 }
 
-// 记入最近打开（去重、只留 3 个）并刷新文件菜单里的索引
-async function addRecent(filePath) {
-  const cfg = await loadConfig();
-  const recent = [filePath, ...cfg.recent.filter((p) => p !== filePath)].slice(0, 3);
-  await saveConfig({ recent });
-  await buildMenu();
+// 记入最近打开（去重、只留 3 个）并刷新文件菜单里的索引。
+// 串行化：同时打开多个文件时各自「读-改-写」会互相覆盖，只剩最后一个
+let recentQueue = Promise.resolve();
+function addRecent(filePath) {
+  recentQueue = recentQueue.then(async () => {
+    const cfg = await loadConfig();
+    const recent = [filePath, ...cfg.recent.filter((p) => p !== filePath)].slice(0, 3);
+    await saveConfig({ recent });
+    await buildMenu();
+  }).catch(() => {});
+  return recentQueue;
 }
 
 // ---------- IPC ----------
@@ -272,8 +290,88 @@ async function openByPath(filePath) {
     return;
   }
   markOpenable(filePath);
-  await addRecent(filePath);
+  // 先通知渲染层打开，再后台更新「最近打开」索引：双击冷启动时菜单重建（读写配置 +
+  // 探测旧路径）不应挡在首屏前面；索引晚一步刷新不影响「最近打开」菜单
   win?.webContents.send('open-file-path', { path: filePath });
+  void addRecent(filePath);
+}
+
+// ---------- 会话恢复（下次启动询问是否保留上次打开的文件） ----------
+
+const SESSION_MAX = 20;
+
+// 只认 .md/.markdown 路径，去重并限量；空会话返回 null（表示没有可恢复内容）
+function sanitizeSession(data) {
+  if (!data || typeof data !== 'object') return null;
+  const paths = [];
+  const seen = new Set();
+  for (const p of Array.isArray(data.paths) ? data.paths : []) {
+    if (typeof p !== 'string' || !/\.(md|markdown)$/i.test(p)) continue;
+    const key = p.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    paths.push(p);
+    if (paths.length >= SESSION_MAX) break;
+  }
+  if (!paths.length) return null;
+  const active = typeof data.active === 'string' && seen.has(data.active.toLowerCase()) ? data.active : paths[0];
+  return { paths, active };
+}
+
+async function existingFiles(paths) {
+  const ok = await Promise.all(paths.map(async (p) => {
+    try { await fs.access(p); return true; } catch { return false; }
+  }));
+  return paths.filter((_, i) => ok[i]);
+}
+
+// 启动时：会话里的文件仍在 → 通知渲染层显示「恢复上次文件？」浮条
+async function offerSession() {
+  const cfg = await loadConfig();
+  const s = sanitizeSession(cfg.session);
+  if (!s) return;
+  const paths = await existingFiles(s.paths);
+  if (!paths.length) { await saveConfig({ session: null }); return; }
+  const active = paths.includes(s.active) ? s.active : paths[0];
+  win?.webContents.send('session-offer', { paths, active });
+}
+
+// 渲染层每次标签页/激活项变化后上报（节流在渲染层做）
+ipcMain.on('save-session', async (e, data) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  await saveConfig({ session: sanitizeSession(data) });
+});
+
+// 「恢复」：过滤已删除文件并放行父目录，返回实际可打开的路径列表
+ipcMain.handle('restore-session', async (e, paths) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return { paths: [] };
+  const list = [];
+  for (const p of Array.isArray(paths) ? paths : []) {
+    if (typeof p !== 'string' || !/\.(md|markdown)$/i.test(p) || list.length >= SESSION_MAX) continue;
+    try { await fs.access(p); } catch { continue; }
+    markOpenable(p);
+    list.push(p);
+  }
+  return { paths: list };
+});
+
+// 「忽略」：清空会话，下次不再询问
+ipcMain.on('dismiss-session', async (e) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  await saveConfig({ session: null });
+});
+
+// 自动化验证钩子（TOT_*）运行时不弹恢复提示，避免干扰既有断言；TOT_SESSION 专测本功能
+// 按白名单判断：TOT_USER_DATA 只隔离数据目录、TOT_SESSION 专测会话，两者都不算「别的钩子在跑」；
+// 用白名单而非任意 TOT_* 前缀，避免用户机器上偶有同名变量时恢复询问被静默关掉
+const DEV_HOOK_ENVS = [
+  'TOT_ARGV', 'TOT_ARGV_HOLD', 'TOT_CHECK', 'TOT_DBL', 'TOT_DRAG', 'TOT_DROP', 'TOT_DROP_FILES',
+  'TOT_EDIT', 'TOT_MERMAID', 'TOT_OPEN_DIR', 'TOT_OPEN_FILE', 'TOT_PANELS', 'TOT_PERF',
+  'TOT_RECENT_MISSING', 'TOT_SCREENSHOT', 'TOT_SEARCH', 'TOT_SEARCH_QUERY', 'TOT_STYLE', 'TOT_TABS',
+  'TOT_WAIT',
+];
+function devHooksActive() {
+  return DEV_HOOK_ENVS.some((k) => process.env[k]);
 }
 
 // 菜单 文件 → 打开文件：对话框选一个 md，树定位展开并打开
@@ -400,6 +498,9 @@ async function createWindow() {
     icon: path.join(__dirname, 'icon.ico'),
     width: 1280,
     height: 840,
+    // 首帧就绪再显示（见下）：先隐藏，避免冷启动时窗口先出来一块白屏
+    show: false,
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -409,6 +510,11 @@ async function createWindow() {
 
   await buildMenu();
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  // 首帧就绪再显示窗口；兜底定时器防 ready-to-show 意外不触发时窗口永远不出现
+  const reveal = () => { if (win && !win.isDestroyed()) win.show(); };
+  win.once('ready-to-show', reveal);
+  setTimeout(reveal, 2000);
 
   // 开发模式：渲染进程 console 转发到终端（验证「DevTools 无报错」用）
   if (!app.isPackaged) {
@@ -429,13 +535,67 @@ async function createWindow() {
   // TOT_CHECK 在页面里跑断言并打印 DOM 状态（树/渲染/大纲/scrollspy）后退出
   win.webContents.on('did-finish-load', async () => {
     winReady = true;
+    if (process.env.TOT_PERF) {
+      // 启动耗时：页面导航起到 load 完成的毫秒数（同步脚本解析 / 首屏渲染都算在内）
+      console.log('[dev:perf]', JSON.stringify({
+        uptimeMs: Math.round(process.uptime() * 1000),
+        pageMs: Math.round(await win.webContents.executeJavaScript('performance.now()')),
+      }));
+    }
     // index.html 的 <title>Tot</title> 会在加载时覆盖窗口标题，这里恢复「Tot + 版本号」
     win.setTitle('Tot ' + app.getVersion());
     if (!process.env.TOT_OPEN_DIR) {
       win.webContents.send('init-tree', { drives: await listDrives() });
       // 文件关联双击：打开命令行传入的 md 文件
-      for (const p of startupMdPaths) await openByPath(p);
-      startupMdPaths.length = 0;
+      const starts = startupMdPaths.splice(0);
+      for (const p of starts) await openByPath(p);
+      // 上次关闭前还有打开的文件：询问是否恢复（自动化钩子下不弹，TOT_SESSION 专测）
+      if (!devHooksActive()) await offerSession();
+      if (process.env.TOT_SESSION) {
+        // 会话恢复验证：浮条状态 → 「恢复」/「忽略」 → 标签页、懒渲染、落盘会话
+        await new Promise((r) => setTimeout(r, 1200));
+        const sessionState = () => win.webContents.executeJavaScript(`JSON.stringify({
+          offerVisible: !document.querySelector('#session-restore').hidden,
+          offerText: document.querySelector('#session-restore-text').textContent,
+          tabs: [...document.querySelectorAll('.tab .tab-name')].map((t) => t.textContent),
+          active: document.querySelector('.tab.active .tab-name')?.textContent ?? null,
+          h1: document.querySelector('#viewer h1')?.textContent ?? null,
+          mermaidLoaded: typeof window.mermaid !== 'undefined',
+          mermaidScripts: performance.getEntriesByType('resource').filter((r) => r.name.includes('mermaid.min.js')).length,
+          mermaidSvgs: document.querySelectorAll('#viewer .mermaid-wrapper > svg').length,
+          treeActive: document.querySelector('#file-tree a.active')?.title ?? null,
+        })`);
+        console.log('[dev:session-before]', await sessionState());
+        if (process.env.TOT_SESSION === 'accept') {
+          await win.webContents.executeJavaScript(`document.querySelector('#session-restore-ok')?.click()`);
+          await new Promise((r) => setTimeout(r, 2000));
+          console.log('[dev:session-after]', await sessionState());
+          // 切到恢复后未渲染的标签页：懒渲染应在切换时补上
+          await win.webContents.executeJavaScript(
+            `document.querySelectorAll('.tab')[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true })) ?? null`,
+          );
+          await new Promise((r) => setTimeout(r, 800));
+          console.log('[dev:session-lazy]', await sessionState());
+          console.log('[dev:session-config]', JSON.stringify((await loadConfig()).session));
+        } else if (process.env.TOT_SESSION === 'dismiss') {
+          await win.webContents.executeJavaScript(`document.querySelector('#session-restore-no')?.click()`);
+          await new Promise((r) => setTimeout(r, 600));
+          console.log('[dev:session-dismiss]', JSON.stringify({
+            offerHidden: await win.webContents.executeJavaScript(`document.querySelector('#session-restore').hidden`),
+            stored: (await loadConfig()).session,
+          }));
+        } else if (process.env.TOT_SESSION === 'drop') {
+          // 拖拽多文件：渲染层 drop 循环并发调用 open-dropped，应与多选/argv 一样全部打开
+          const files = (process.env.TOT_DROP_FILES || '').split(';').filter(Boolean);
+          await win.webContents.executeJavaScript(
+            `Promise.all(${JSON.stringify(files)}.map((p) => window.tot.openDropped(p)))`,
+          );
+          await new Promise((r) => setTimeout(r, 1500));
+          console.log('[dev:session-drop]', await sessionState());
+        }
+        app.quit();
+        return;
+      }
       if (process.env.TOT_ARGV) {
         // 文件关联首次双击验证：argv 传入的 md 已打开并渲染
         await new Promise((r) => setTimeout(r, 2500));
@@ -1721,7 +1881,7 @@ async function createWindow() {
     } catch (err) {
       console.error('[dev] auto-drive failed:', err);
     }
-    if (process.env.TOT_SCREENSHOT || process.env.TOT_CHECK || process.env.TOT_PANELS || process.env.TOT_DRAG || process.env.TOT_DROP || process.env.TOT_MERMAID || process.env.TOT_EDIT || process.env.TOT_SEARCH || process.env.TOT_TABS || process.env.TOT_DBL) app.quit();
+    if (process.env.TOT_SCREENSHOT || process.env.TOT_CHECK || process.env.TOT_PANELS || process.env.TOT_DRAG || process.env.TOT_DROP || process.env.TOT_MERMAID || process.env.TOT_EDIT || process.env.TOT_SEARCH || process.env.TOT_TABS || process.env.TOT_DBL || process.env.TOT_PERF) app.quit();
   });
 }
 

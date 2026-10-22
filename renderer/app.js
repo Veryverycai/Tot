@@ -161,9 +161,12 @@ window.tot.onLocatePath(async (data) => {
   document.querySelector(`#file-tree details[data-path="${CSS.escape(data.path)}"] summary`)?.scrollIntoView({ block: 'center' });
 });
 
-// 菜单 打开文件 / 最近打开：定位展开并打开该文件
-window.tot.onOpenFilePath(async (data) => {
-  await openFile(data.path);
+// 菜单 打开文件 / 最近打开：定位展开并打开该文件。
+// 主进程连续推送多个路径（多选/拖拽/argv 多文件）时排队依次打开：openFile 内部有
+// 序号令牌，并发调用只会保留最后一个，前面的会被丢弃
+let openPathQueue = Promise.resolve();
+window.tot.onOpenFilePath((data) => {
+  openPathQueue = openPathQueue.then(() => openFile(data.path)).catch(() => {});
 });
 
 // 菜单 最近打开的文件已被删除：主进程已从索引移除，这里给出提示
@@ -253,8 +256,83 @@ function baseName(p) {
   return p.split(/[\\/]/).pop();
 }
 
-// 打开文件：已开则激活，否则新建标签页并渲染
-async function openFile(filePath, linkEl) {
+// ---------- 会话恢复（关闭后下次打开 询问保留上次打开的文件） ----------
+
+let sessionSaveTimer = null;
+// 浮条还没处理时不覆盖旧会话：用户没看到提示就关窗口，不该把上次的文件记录清空
+let sessionOfferPending = false;
+
+function sessionSnapshot() {
+  return { paths: tabs.map((t) => t.path), active: activeTab ? activeTab.path : null };
+}
+
+function pushSessionNow() {
+  if (sessionOfferPending) return;
+  clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = null;
+  window.tot.saveSession(sessionSnapshot());
+}
+
+// 标签页/激活项变化后延迟上报（连续打开多个文件只写一次配置）
+function scheduleSessionSave() {
+  if (sessionOfferPending) return;
+  clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = setTimeout(pushSessionNow, 300);
+}
+
+function showSessionOffer(data) {
+  const paths = Array.isArray(data.paths) ? data.paths : [];
+  if (!paths.length) return;
+  sessionOfferPending = true;
+  const el = $('#session-restore');
+  el.dataset.paths = JSON.stringify(paths);
+  el.dataset.active = data.active || paths[0];
+  $('#session-restore-text').textContent = paths.length === 1
+    ? `上次打开了 ${baseName(paths[0])}，恢复吗？`
+    : `上次打开了 ${paths.length} 个文件，恢复吗？`;
+  el.hidden = false;
+}
+
+// 「恢复」：先把文件都建成标签页（不渲染），只渲染上次激活的那个——恢复多文件不卡
+async function acceptSessionOffer() {
+  const el = $('#session-restore');
+  el.hidden = true;
+  sessionOfferPending = false;
+  let paths = [];
+  let active = '';
+  try {
+    paths = JSON.parse(el.dataset.paths || '[]');
+    active = el.dataset.active || '';
+  } catch {}
+  const res = await window.tot.restoreSession(paths);
+  const ok = res && Array.isArray(res.paths) ? res.paths : [];
+  for (const p of ok) {
+    await openFile(p, null, { lazyRender: true, skipRecent: true, skipTree: true });
+  }
+  const target = tabs.find((t) => t.path === active) || tabs.find((t) => ok.includes(t.path));
+  if (target) {
+    await activateTab(target);
+    window.tot.addRecent(target.path);
+    setTimeout(() => {
+      walkPath(target.path).then(() => {
+        restoreTreeActive();
+        document.querySelector(`#file-tree a[title="${CSS.escape(target.path)}"]`)?.scrollIntoView({ block: 'center' });
+      }).catch(() => {});
+    }, 0);
+  }
+  pushSessionNow();
+}
+
+function dismissSessionOffer() {
+  $('#session-restore').hidden = true;
+  sessionOfferPending = false;
+  window.tot.dismissSession();
+}
+
+// 打开文件：已开则激活，否则新建标签页并渲染。
+// opts.lazyRender：只建标签页不渲染（会话恢复批量打开，切过去才渲染）；
+// opts.skipRecent / opts.skipTree：批量恢复时跳过「最近打开」与逐层树定位。
+async function openFile(filePath, linkEl, opts = {}) {
   const existing = tabs.find((t) => t.path === filePath);
   if (existing) {
     await activateTab(existing);
@@ -286,18 +364,29 @@ async function openFile(filePath, linkEl) {
       scrollTop: 0,
     };
     tabs.push(tab);
-    await renderTab(tab);
+    if (opts.lazyRender) {
+      tab.pendingRender = true; // 恢复会话时批量打开：切到该 tab 才渲染
+      updateTabbar();
+    } else {
+      await renderTab(tab);
+    }
   }
   if (linkEl) {
     document.querySelectorAll('#file-tree a.active').forEach((a) => a.classList.remove('active'));
     linkEl.classList.add('active');
   }
   // 记入文件菜单的「最近打开」
-  window.tot.addRecent(filePath);
-  // 树定位：懒加载展开到该文件所在路径（路径聚焦），并滚进可视区
-  await walkPath(filePath);
-  restoreTreeActive();
-  document.querySelector(`#file-tree a[title="${CSS.escape(filePath)}"]`)?.scrollIntoView({ block: 'center' });
+  if (!opts.skipRecent) window.tot.addRecent(filePath);
+  scheduleSessionSave();
+  if (opts.skipTree) return;
+  // 树定位（逐层展开 + 每层扫描）放到下一轮事件循环：先把正文绘制出来，
+  // 双击打开深层目录的文件时首屏不再被目录扫描挡在后面
+  setTimeout(() => {
+    walkPath(filePath).then(() => {
+      restoreTreeActive();
+      document.querySelector(`#file-tree a[title="${CSS.escape(filePath)}"]`)?.scrollIntoView({ block: 'center' });
+    }).catch(() => {});
+  }, 0);
 }
 
 // 新开标签页：渲染到预览区
@@ -325,12 +414,20 @@ async function activateTab(tab) {
   activeTab = tab;
   $('#panes').hidden = false;
   $('#empty').hidden = true;
+  if (tab.pendingRender) {
+    // 会话恢复时只读了文本，首次切过来才真正渲染
+    tab.pendingRender = false;
+    await renderTab(tab);
+    scheduleSessionSave();
+    return;
+  }
   await renderMarkdown($('#viewer'), tab.text, tab.path);
   rebuildOutline();
   activeScroll().scrollTop = tab.scrollTop;
   updateTabbar();
   updateUndoButton();
   restoreTreeActive();
+  scheduleSessionSave();
 }
 
 function updateTabbar() {
@@ -410,14 +507,25 @@ function doClose(i) {
     restoreTreeActive();
     updateTabbar();
     updateUndoButton(); // 最后一个标签页关掉后撤销栈不再存在，按钮回灰
+    scheduleSessionSave();
     return;
   }
   if (wasActive) activateTab(tabs[Math.min(i, tabs.length - 1)]);
   else updateTabbar();
+  scheduleSessionSave();
 }
 
 $('#close-discard').addEventListener('click', () => { if (pendingCloseIndex >= 0) doClose(pendingCloseIndex); });
 $('#close-cancel').addEventListener('click', () => { pendingCloseIndex = -1; $('#close-confirm').hidden = true; });
+
+// 会话恢复浮条：启动时主进程中继「上次关闭前还有文件」的询问
+window.tot.onSessionOffer((data) => showSessionOffer(data));
+$('#session-restore-ok').addEventListener('click', acceptSessionOffer);
+$('#session-restore-no').addEventListener('click', dismissSessionOffer);
+// 关窗口前把最后一刻的标签页状态同步给主进程（send 在销毁前发出）
+window.addEventListener('beforeunload', () => {
+  if (!sessionOfferPending) window.tot.saveSession(sessionSnapshot());
+});
 
 // ---------- 保存 ----------
 
@@ -549,12 +657,14 @@ async function renderMarkdown(targetEl, text, filePath) {
   flushDiagramEdit(); // 同上：图表编辑
   targetEl.innerHTML = marked.parse(text);
   const imgs = [...targetEl.querySelectorAll('img')];
-  const srcs = imgs.map((img) => img.getAttribute('src') || '');
-  const resolved = await window.tot.resolveImages(filePath, srcs);
-  imgs.forEach((img, i) => {
-    if (resolved[i] !== srcs[i]) img.dataset.origSrc = srcs[i]; // 记原始相对路径：就地编辑回写时还原
-    img.src = resolved[i];
-  });
+  if (imgs.length) {
+    const srcs = imgs.map((img) => img.getAttribute('src') || '');
+    const resolved = await window.tot.resolveImages(filePath, srcs);
+    imgs.forEach((img, i) => {
+      if (resolved[i] !== srcs[i]) img.dataset.origSrc = srcs[i]; // 记原始相对路径：就地编辑回写时还原
+      img.src = resolved[i];
+    });
+  }
   // mermaid 围栏 → 图表 wrapper（在 hljs 之前：pre 被替换后不再进入高亮循环）
   await renderMermaidBlocks(targetEl);
   // 代码语法高亮（替换 code 内文本为 token span，须在 applySearch 之前）
@@ -568,6 +678,23 @@ async function renderMarkdown(targetEl, text, filePath) {
 }
 
 // ---------- Mermaid 图表渲染与就地编辑 ----------
+
+// mermaid.min.js 有 5.5 MB，不在 index.html 同步加载：首次遇到图表才注入。
+// 双击打开没有图表的文档时，冷启动不必为这段解析付出时间。
+let mermaidLoadPromise = null;
+function ensureMermaidLoaded() {
+  if (window.mermaid) return Promise.resolve(true);
+  if (!mermaidLoadPromise) {
+    mermaidLoadPromise = new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = '../lib/mermaid.min.js';
+      s.onload = () => resolve(!!window.mermaid);
+      s.onerror = () => { mermaidLoadPromise = null; resolve(false); }; // 下次有图表再重试
+      document.head.append(s);
+    });
+  }
+  return mermaidLoadPromise;
+}
 
 function currentStyleDark() {
   const s = STYLES.find((x) => x.id === state.style);
@@ -587,6 +714,7 @@ function ensureMermaidInit() {
 
 // 渲染 mermaid 源码为 svg 字符串（id 递增保证唯一；strict 模式输出已消毒）
 async function mermaidRenderSvg(src) {
+  if (!(await ensureMermaidLoaded())) throw new Error('Mermaid 库加载失败');
   if (!ensureMermaidInit()) throw new Error('Mermaid 库未加载');
   const id = `tot-mermaid-${++mermaidIdSeq}`;
   try {
@@ -623,6 +751,8 @@ async function renderMermaidWrapper(wrapper, src) {
 // 把目标容器里全部 mermaid 围栏替换为 wrapper（DOM 顺序 = 源文围栏顺序，序号 1:1）
 async function renderMermaidBlocks(targetEl) {
   const codes = [...targetEl.querySelectorAll('pre code.language-mermaid')];
+  if (!codes.length) return; // 没有图表就不加载 mermaid
+  await ensureMermaidLoaded(); // 加载失败也继续：错误态由 renderMermaidWrapper 的 catch 显示，仍可点开编辑
   let idx = 0;
   for (const code of codes) {
     const pre = code.closest('pre');

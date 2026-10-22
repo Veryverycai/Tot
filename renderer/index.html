@@ -52,6 +52,11 @@
         <button id="close-discard">关闭并丢弃</button>
         <button id="close-cancel">取消</button>
       </div>
+      <div id="session-restore" hidden>
+        <span id="session-restore-text">上次打开了文件</span>
+        <button id="session-restore-ok">恢复</button>
+        <button id="session-restore-no">忽略</button>
+      </div>
       <div id="empty">
         <p>还没有打开目录</p>
         <p class="hint">菜单 文件 → 打开文件夹 (Ctrl+Shift+O)</p>
@@ -61,7 +66,7 @@
 
   <script src="../lib/highlight.min.js"></script>
   <script src="../lib/marked.umd.js"></script>
-  <script src="../lib/mermaid.min.js"></script>
+  <!-- mermaid（5.5 MB）改为首次遇到图表时按需加载：双击冷启动不再为它付出解析时间 -->
   <script src="../lib/turndown.min.js"></script>
   <script src="../lib/turndown-plugin-gfm.min.js"></script>
   <script src="app.js"></script>

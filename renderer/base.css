@@ -303,6 +303,41 @@ mark.tot-search.current { background: #ffb300; color: #1f2328; }
   color: #fff;
 }
 
+/* ---- 会话恢复浮条（启动时询问是否恢复上次打开的文件） ---- */
+
+#session-restore {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #fff;
+  border: 1px solid #d1d9e0;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+  font-size: 13px;
+  white-space: nowrap;
+  z-index: 11;
+}
+
+#session-restore button {
+  padding: 4px 14px;
+  border-radius: 6px;
+  border: 1px solid #d1d9e0;
+  background: #f6f8fa;
+  cursor: pointer;
+  font: inherit;
+}
+
+#session-restore #session-restore-ok {
+  background: #0969da;
+  border-color: #0969da;
+  color: #fff;
+}
+
 /* ---- 文件树 ---- */
 
 #file-tree { flex: 1; overflow-y: auto; padding: 8px 4px; }

@@ -226,6 +226,24 @@ md-browser/
 - 发布：commit ef68c5b（代码）+ 0c0b6b9（版本/文档）+ tag v1.2.5；本机 SSH 密钥未授权、github.com:443 被重置，改用 gh token 调 Git Data API 重放提交（SHA 与本地一致）更新 main 与 tag
 - Release：[Tot 1.2.5](https://github.com/Veryverycai/Tot/releases/tag/v1.2.5)（`gh release create` + `gh release upload`；资产 Tot.1.2.5.exe 112,732,432 B / Tot.Setup.1.2.5.exe 113,013,770 B，与本地字节一致）
 
+## 1.2.6 优化（双击冷启动卡顿 / 关闭后恢复上次文件）
+
+- 现象：把多个 md 拖进已运行窗口不卡；双击 md（文件关联，冷启动）时白屏到首屏明显更慢
+- 定位：①index.html 启动即同步加载 mermaid.min.js（5.49 MB），解析执行挡在首屏前；②启动时 listDrives 串行 26 次 fs.access 才发 init-tree；③openByPath 先 await addRecent（读配置 + 探测旧路径 + 重建菜单）再打开文件；④openFile 里 walkPath 逐层扫描目录挡在渲染前
+- 优化：①mermaid 改为按需加载——首屏不再引用，首次遇到 mermaid 围栏时动态注入（失败可重试），无图表文档永不加载；②盘符探测并行（Promise.all）；③双击先推送 open-file-path，最近打开索引改为后台串行更新；④树定位延迟到 setTimeout(0)，让首帧先渲染；⑤窗口 show:false + ready-to-show（2s 兜底）避免白屏闪烁
+- 实测（lazy/sync 交替各 3 次，argv 双击同一 md）：pageMs 中位 203 → 76（-62%），uptime 中位 271 → 150 ms；含图表的文档在打开后才加载 mermaid，双击/恢复同理
+- 会话恢复（新功能）：渲染层节流 300 ms 上报打开标签与激活项 → config.session（只收 .md/.markdown、去重、≤20）；下次启动过滤已删除文件后，底部浮条询问「上次打开了 N 个文件，恢复吗？」；恢复时只建标签不渲染（切到才渲染）、只渲染激活项、跳过最近打开与树定位；点「忽略」清空会话；启动参数（双击）文件与会话合并，双击文件排在前面
+- 并发正确性：saveConfig 串行队列 + 临时文件 rename 原子写（修复退出瞬间 beforeunload 上报把 config.json 截断为 0 字节）；addRecent 同样串行（避免并发读改写互相覆盖）；渲染层 open-file-path 改串行队列（openSeq 令牌会丢弃并发请求，多文件只剩最后一个）
+- 验证：临时驱动 21/21（双击不弹浮条且树定位/会话落盘、恢复顺序与激活项、懒渲染切换、忽略清空、配置跟随、mermaid 按需加载、双击+会话合并、多文件 argv、并发 drop 全部打开）；devHooks 白名单改动后回归 5/5；node --check main.js / preload.js / renderer/app.js 通过；临时脚本与 fixture 已清理
+- 版本号 1.2.5 → 1.2.6（package.json；README 下载项同步为 Tot 1.2.6.exe / Tot Setup 1.2.6.exe）
+
+### 打包轮（1.2.6）
+
+- 构建：`electron-builder --config.electronDist=node_modules/electron/dist --publish never`（npm 脚本走 npx.ps1 被执行策略拦，改用 `node_modules\.bin\electron-builder.cmd`）
+- 产物：Tot 1.2.6.exe（便携，112,736,334 B）、Tot Setup 1.2.6.exe（安装，113,017,667 B）+ blockmap（119,449 B）、latest.yml（version 1.2.6）；旧 1.2.5 安装产物与 1.2.4 便携已删（1.2.5 便携被运行中旧版占用，保留）
+- 冒烟：win-unpacked 窗口标题 Tot 1.2.6 / VersionInfo 1.2.6（ProductVersion 1.2.6.0）、主进程 + 3 子进程、进程树杀净、隔离 userData 已清理
+- 本轮打包与发布同轮
+
 ## 已知限制（1.1）
 
 - BOM 丢失：读文件按 utf8 解码，带 BOM 的 md 保存后 BOM 不保留（内容不变）
