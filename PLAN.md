@@ -223,7 +223,8 @@ md-browser/
 - 构建：`electron-builder --config.electronDist=node_modules/electron/dist --publish never`（本地 Electron 发行目录，避开 GitHub 下载超时）
 - 产物：Tot 1.2.5.exe（便携，112,732,432 B）、Tot Setup 1.2.5.exe（安装，113,013,770 B）+ blockmap（119,592 B）、latest.yml（version 1.2.5）；旧 1.2.4 安装产物已删（便携 exe 被运行中的旧版占用，dist 不入库）
 - 冒烟：win-unpacked 窗口标题 Tot 1.2.5 / VersionInfo 1.2.5（ProductVersion 1.2.5.0）、进程树杀净；便携版（独立 userData 规避单实例转发）解压后 stub + 主进程 + 3 子进程、标题 Tot 1.2.5、stub 树杀无残留、临时解压目录已清理
-- 发布：commit + tag v1.2.5 + push origin main / v1.2.5
+- 发布：commit ef68c5b（代码）+ 0c0b6b9（版本/文档）+ tag v1.2.5；本机 SSH 密钥未授权、github.com:443 被重置，改用 gh token 调 Git Data API 重放提交（SHA 与本地一致）更新 main 与 tag
+- Release：[Tot 1.2.5](https://github.com/Veryverycai/Tot/releases/tag/v1.2.5)（`gh release create` + `gh release upload`；资产 Tot.1.2.5.exe 112,732,432 B / Tot.Setup.1.2.5.exe 113,013,770 B，与本地字节一致）
 
 ## 已知限制（1.1）
 
