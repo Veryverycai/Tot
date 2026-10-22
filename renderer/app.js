@@ -130,6 +130,8 @@ applyStyle(state.style);
 
 window.tot.onMenuCommand((cmd) => {
   if (cmd === 'save') saveActiveTab();
+  else if (cmd === 'undo') undoAction();
+  else if (cmd === 'redo') redoAction();
 });
 
 // ---------- 目录与文件树（我的电脑 → 盘符 → 文件夹 → 文件，点开哪层扫哪层） ----------
@@ -266,13 +268,21 @@ async function openFile(filePath, linkEl) {
       return;
     }
     if (seq !== openSeq) return; // 已有更新的打开请求，丢弃本次
+    // 内存统一为 \n：marked.lexer 的 token.raw 已把 CRLF 归一成 LF，若拿它去切片
+    // 仍含 CRLF 的原文，块区间会从第一个换行起逐行前移——退编辑写回就会串块
+    // （吞空行、尾字重复，甚至把标题写进上一段把正文弄粗）。保存时按 lineEnding 还原
+    const lineEnding = text.includes('\r\n') ? '\r\n' : '\n';
+    const normalized = text.replace(/\r\n?/g, '\n');
     const tab = {
       id: `tab-${seq}`,
       path: filePath,
       name: baseName(filePath),
-      text,
+      text: normalized,
+      savedText: normalized, // 最近一次保存的文本：dirty 与撤销后的判定基准
+      undoStack: [],        // 块/图表编辑提交前的文本快照
+      redoStack: [],
       dirty: false,
-      lineEnding: text.includes('\r\n') ? '\r\n' : '\n',
+      lineEnding,
       scrollTop: 0,
     };
     tabs.push(tab);
@@ -304,6 +314,7 @@ async function renderTab(tab) {
   }
   activeScroll().scrollTop = 0;
   updateTabbar();
+  updateUndoButton();
   restoreTreeActive();
 }
 
@@ -318,6 +329,7 @@ async function activateTab(tab) {
   rebuildOutline();
   activeScroll().scrollTop = tab.scrollTop;
   updateTabbar();
+  updateUndoButton();
   restoreTreeActive();
 }
 
@@ -397,6 +409,7 @@ function doClose(i) {
     document.querySelectorAll('#file-tree details:not([data-pc-root])').forEach((d) => { d.open = false; });
     restoreTreeActive();
     updateTabbar();
+    updateUndoButton(); // 最后一个标签页关掉后撤销栈不再存在，按钮回灰
     return;
   }
   if (wasActive) activateTab(tabs[Math.min(i, tabs.length - 1)]);
@@ -411,15 +424,28 @@ $('#close-cancel').addEventListener('click', () => { pendingCloseIndex = -1; $('
 // 顶栏保存按钮（与菜单 Ctrl+S 同一路径）
 $('#save-btn').addEventListener('click', saveActiveTab);
 
-// 顶栏「撤销」按钮：与编辑菜单「撤销」同款（主进程 webContents.undo 原生撤销当前焦点编辑区），
-// 省得去编辑菜单选。mousedown 不抢焦点，否则块失焦会被当作「应用」提交
+// 顶栏「撤销」按钮：编辑区内走原生逐字撤销；退出编辑后走文档级历史（整块回退）
+// mousedown 不抢焦点，否则块失焦会被当作「应用」提交
 const undoBtn = $('#undo-btn');
 undoBtn.addEventListener('mousedown', (e) => e.preventDefault());
-undoBtn.addEventListener('click', () => window.tot.undo());
-function updateUndoButton() {
+undoBtn.addEventListener('click', undoAction);
+
+// 焦点在可编辑区（块编辑/图表源码/搜索框）时，撤销/重做仍走原生
+function editorFocus() {
   const ae = document.activeElement;
-  undoBtn.disabled = !(blockEditor || diagramEditor ||
+  return !!(blockEditor || diagramEditor ||
     (ae && (ae.isContentEditable || ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT')));
+}
+function undoAction() {
+  if (editorFocus()) { window.tot.undo(); return; }
+  appUndo();
+}
+function redoAction() {
+  if (editorFocus()) { window.tot.redo(); return; }
+  appRedo();
+}
+function updateUndoButton() {
+  undoBtn.disabled = !(editorFocus() || (activeTab && activeTab.undoStack && activeTab.undoStack.length));
 }
 document.addEventListener('focusin', updateUndoButton);
 document.addEventListener('focusout', () => setTimeout(updateUndoButton, 0)); // focusout 时 activeElement 尚未更新
@@ -427,6 +453,62 @@ document.addEventListener('focusout', () => setTimeout(updateUndoButton, 0)); //
 function updateTabbarDirty(tab) {
   if (tab.el) tab.el.querySelector('.tab-dirty').hidden = !tab.dirty;
   if (tab === activeTab) $('#save-btn').disabled = !tab.dirty;
+}
+
+// ---------- 文档级撤销 / 重做 ----------
+// 原生撤销（webContents.undo）只作用于当前焦点编辑区，块编辑提交并重渲染后原生撤销栈
+// 随 DOM 一起销毁——退出编辑框后无法回退。这里按 tab 记录整篇文本快照：块/图表编辑
+// 提交前压栈，Ctrl+Z（编辑菜单）与顶栏撤销都能整块回退；撤销/重做只改内存，dirty 按
+// 最近一次保存的文本重算，只有 Ctrl+S / 保存按钮才写盘
+const UNDO_LIMIT = 50;
+
+function pushUndo(tab, beforeText) {
+  (tab.undoStack || (tab.undoStack = [])).push(beforeText);
+  if (tab.undoStack.length > UNDO_LIMIT) tab.undoStack.shift();
+  tab.redoStack = []; // 新编辑作废重做链
+}
+
+// 改文本统一入口：dirty 以最近一次保存的文本为基准（撤回保存前状态会重新变脏）
+function setTabText(tab, text) {
+  if (!tab.undoStack) tab.undoStack = [];
+  if (!tab.redoStack) tab.redoStack = [];
+  tab.text = text;
+  tab.dirty = text !== tab.savedText;
+  updateTabbarDirty(tab);
+  updateUndoButton();
+}
+
+let historyBusy = false;
+
+async function appUndo() {
+  const tab = activeTab;
+  if (historyBusy || !tab || !tab.undoStack || !tab.undoStack.length) return;
+  historyBusy = true;
+  tab.redoStack.push(tab.text);
+  if (tab.redoStack.length > UNDO_LIMIT) tab.redoStack.shift();
+  await restoreTabText(tab, tab.undoStack.pop());
+  historyBusy = false;
+  showStatus('已撤销');
+}
+
+async function appRedo() {
+  const tab = activeTab;
+  if (historyBusy || !tab || !tab.redoStack || !tab.redoStack.length) return;
+  historyBusy = true;
+  tab.undoStack.push(tab.text);
+  if (tab.undoStack.length > UNDO_LIMIT) tab.undoStack.shift();
+  await restoreTabText(tab, tab.redoStack.pop());
+  historyBusy = false;
+  showStatus('已重做');
+}
+
+async function restoreTabText(tab, text) {
+  const keep = activeScroll().scrollTop;
+  setTabText(tab, text);
+  await renderMarkdown(activeViewer(), tab.text, tab.path);
+  rebuildOutline();
+  activeScroll().scrollTop = keep;
+  updateUndoButton();
 }
 
 // 菜单 文件 → 保存 / Ctrl+S（唯一入口，渲染层不监听 Ctrl+S 防双触发）
@@ -439,8 +521,10 @@ async function saveActiveTab() {
   try {
     // 编辑把换行统一成 \n，写盘时按原文件的换行风格还原
     await window.tot.writeFile(tab.path, tab.text.split('\n').join(tab.lineEnding));
+    tab.savedText = tab.text;
     tab.dirty = false;
     updateTabbarDirty(tab);
+    updateUndoButton();
     showStatus('已保存');
   } catch (err) {
     showStatus('保存失败：' + err.message, true);
@@ -673,9 +757,9 @@ async function applyDiagramEdit() {
     showStatus('应用失败：找不到对应代码围栏', true);
     return;
   }
-  d.tab.text = replaceMermaidFenceContent(d.tab.text, fence, newSrc);
-  d.tab.dirty = true;
-  updateTabbarDirty(d.tab);
+  const before = d.tab.text;
+  pushUndo(d.tab, before);
+  setTabText(d.tab, replaceMermaidFenceContent(before, fence, newSrc));
   mermaidSrcs.set(d.wrapper, newSrc); // 与文本保持一致：后续重主题按新源码重渲染
   resetDiagramEditor();
   await renderMarkdown(activeViewer(), d.tab.text, d.tab.path);
@@ -709,9 +793,9 @@ function flushDiagramEdit() {
   if (newSrc !== null && newSrc !== d.originalSrc) {
     const fence = findMermaidFence(d.tab.text, d.idx) || findMermaidFenceByContent(d.tab.text, d.originalSrc);
     if (fence) {
-      d.tab.text = replaceMermaidFenceContent(d.tab.text, fence, newSrc);
-      d.tab.dirty = true;
-      updateTabbarDirty(d.tab);
+      const before = d.tab.text;
+      pushUndo(d.tab, before);
+      setTabText(d.tab, replaceMermaidFenceContent(before, fence, newSrc));
       mermaidSrcs.set(d.wrapper, newSrc);
     }
   }
@@ -1108,6 +1192,19 @@ function onBlockFocusOut(e) {
   applyBlockEdit();
 }
 
+// 点块外任意位置（正文空白、侧栏、顶栏…）= 应用并退出。不能只靠 focusout：
+// 点开编辑后块还没获得焦点时（未再点进正文），根本不存在失焦事件，点空白会
+// 一直停在编辑态。pointerdown 捕获阶段显式判定，保证退出行为确定；工具条在块内
+// 不受影响，撤销按钮保留焦点做原生撤销
+function onOutsidePointerDown(e) {
+  const b = blockEditor;
+  if (!b || b.kind !== 'rich') return;
+  if (b.el.contains(e.target)) return;
+  if (e.target.closest?.('#undo-btn')) return;
+  applyBlockEdit();
+}
+document.addEventListener('pointerdown', onOutsidePointerDown, true);
+
 function onBlockKeyDown(e) {
   if (e.key === 'Escape' && !e.isComposing) { e.stopPropagation(); cancelBlockEdit(); }
 }
@@ -1127,14 +1224,15 @@ async function applyBlockEdit() {
   writeBlockEdit(b, newSrc);
   await renderMarkdown($('#viewer'), b.tab.text, b.tab.path);
   rebuildOutline();
-  showStatus('已更新');
+  showStatus('已更新（Ctrl+S 保存）');
 }
 
 // 写回源文（不渲染）：apply 与 flush 共用
 function writeBlockEdit(b, newSrc) {
-  b.tab.text = b.tab.text.slice(0, b.range.start) + newSrc.replace(/\n+$/, '') + b.tab.text.slice(b.range.end);
-  b.tab.dirty = true;
-  updateTabbarDirty(b.tab);
+  const before = b.tab.text;
+  const after = before.slice(0, b.range.start) + newSrc.replace(/\n+$/, '') + before.slice(b.range.end);
+  pushUndo(b.tab, before); // 退出/应用后仍可整块撤销
+  setTabText(b.tab, after);
   blockEditor = null;
   updateUndoButton();
 }
@@ -1509,6 +1607,14 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     const i = tabs.indexOf(activeTab);
     activateTab(e.shiftKey ? tabs[(i - 1 + tabs.length) % tabs.length] : tabs[(i + 1) % tabs.length]);
+  } else if (mod && e.key.toLowerCase() === 'z' && !e.isComposing && !editorFocus()) {
+    // 退出编辑后的 Ctrl+Z / Ctrl+Shift+Z：走文档级历史（整块回退）。编辑区内不拦截，
+    // 保持 Chromium 原生逐字撤销。菜单项只显示快捷键不注册，避免两边同时处理导致撤销两步
+    e.preventDefault();
+    if (e.shiftKey) redoAction(); else undoAction();
+  } else if (mod && e.key.toLowerCase() === 'y') {
+    e.preventDefault();
+    redoAction(); // 编辑菜单的重做是 Ctrl+Shift+Z，Windows 习惯的 Ctrl+Y 在此兜底
   } else if (e.key === 'Escape' && !e.isComposing && blockEditor) {
     cancelBlockEdit(); // 焦点不在编辑块内时兜底取消（块内 Esc 由自身 stopPropagation 处理）
   } else if (e.key === 'Escape' && !e.isComposing && diagramEditor) {

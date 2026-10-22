@@ -193,9 +193,12 @@ ipcMain.handle('open-dropped', async (_e, p) => {
   await openByPath(p);
 });
 
-// 顶栏「撤销」按钮：与编辑菜单「撤销」（role: 'undo'）同款原生撤销
+// 原生撤销/重做（编辑区内逐字）：顶栏「撤销」按钮与编辑菜单命中编辑区时走这里
 ipcMain.on('web-undo', (e) => {
   if (win && !win.isDestroyed() && e.sender === win.webContents) win.webContents.undo();
+});
+ipcMain.on('web-redo', (e) => {
+  if (win && !win.isDestroyed() && e.sender === win.webContents) win.webContents.redo();
 });
 
 // 插入图片：系统文件选择器 → 相对当前文档路径的相对路径（渲染侧再走 resolve-images 取 mdfile URL）
@@ -317,8 +320,12 @@ async function buildMenu() {
     {
       label: '编辑',
       submenu: [
-        { role: 'undo', label: '撤销' },
-        { role: 'redo', label: '重做' },
+        // 不用 role：撤销/重做需要路由到渲染层——编辑区内走原生逐字撤销，退出编辑后
+        // 走文档级历史（role 只在焦点编辑区生效，退出编辑框后就无法回退）。
+        // registerAccelerator: false = 只显示快捷键、不注册到菜单系统：按键统一由渲染层分发
+        // （编辑区内原生、退出后文档级），否则菜单与渲染层会各撤销一次
+        { label: '撤销', accelerator: 'CmdOrCtrl+Z', registerAccelerator: false, click: () => win?.webContents.send('menu-command', 'undo') },
+        { label: '重做', accelerator: 'CmdOrCtrl+Shift+Z', registerAccelerator: false, click: () => win?.webContents.send('menu-command', 'redo') },
         { type: 'separator' },
         { role: 'cut', label: '剪切' },
         { role: 'copy', label: '复制' },

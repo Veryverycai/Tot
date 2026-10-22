@@ -1,0 +1,189 @@
+/* ===== 报纸渲染风格（手写）：纸色底 + 宋体正文 + 黑体标题 + 首行缩进 ===== */
+
+body.style-newspaper .markdown-body {
+  color: #1a1a1a;
+  background: #faf8f2;
+  font-family: "Noto Serif SC", "SimSun", "Songti SC", "STSong", serif;
+  font-size: 16px;
+  line-height: 1.9;
+  word-wrap: break-word;
+}
+
+/* 标题：黑体、居中大头条、细分隔线 */
+body.style-newspaper .markdown-body h1,
+body.style-newspaper .markdown-body h2,
+body.style-newspaper .markdown-body h3,
+body.style-newspaper .markdown-body h4,
+body.style-newspaper .markdown-body h5,
+body.style-newspaper .markdown-body h6 {
+  font-family: "SimHei", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.35;
+}
+
+body.style-newspaper .markdown-body h1,
+body.style-newspaper .markdown-body h2 { margin: 2em 0 0.8em; }
+
+body.style-newspaper .markdown-body h3,
+body.style-newspaper .markdown-body h4,
+body.style-newspaper .markdown-body h5,
+body.style-newspaper .markdown-body h6 { margin: 1.7em 0 0.6em; }
+
+body.style-newspaper .markdown-body h1 {
+  font-size: 1.9em;
+  font-weight: 900;
+  text-align: center;
+  letter-spacing: 0.05em;
+}
+
+body.style-newspaper .markdown-body h2 {
+  font-size: 1.45em;
+  font-weight: 700;
+  padding-bottom: 0.25em;
+  border-bottom: 3px double #8c8c8c;
+}
+
+body.style-newspaper .markdown-body h3 { font-size: 1.22em; font-weight: 700; }
+body.style-newspaper .markdown-body h4 { font-size: 1.08em; font-weight: 700; }
+body.style-newspaper .markdown-body h5,
+body.style-newspaper .markdown-body h6 { font-size: 1em; font-weight: 700; color: #4a4a4a; }
+
+body.style-newspaper .markdown-body h1 + p,
+body.style-newspaper .markdown-body h2 + p,
+body.style-newspaper .markdown-body h3 + p,
+body.style-newspaper .markdown-body h4 + p { margin-top: 0; }
+
+/* 段落：中文报纸惯例——首行缩进两字 + 两端对齐 */
+body.style-newspaper .markdown-body p {
+  margin: 0 0 0.9em;
+  text-indent: 2em;
+  text-align: justify;
+}
+
+body.style-newspaper .markdown-body ul,
+body.style-newspaper .markdown-body ol { padding-left: 2.2em; margin: 0 0 0.9em; }
+
+body.style-newspaper .markdown-body li + li { margin-top: 0.25em; }
+
+/* 链接 */
+body.style-newspaper .markdown-body a { color: #0f4c81; text-decoration: none; }
+body.style-newspaper .markdown-body a:hover { text-decoration: underline; }
+
+/* 引用 */
+body.style-newspaper .markdown-body blockquote {
+  margin: 0 0 0.9em;
+  padding: 0.1em 0 0.1em 1.2em;
+  color: #3d3d3d;
+  border-left: 3px double #8c8c8c;
+}
+
+body.style-newspaper .markdown-body blockquote > :last-child { margin-bottom: 0; }
+
+/* 代码 */
+body.style-newspaper .markdown-body code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.9em;
+  padding: 0.15em 0.4em;
+  background: #f0ece0;
+  border-radius: 2px;
+}
+
+body.style-newspaper .markdown-body pre {
+  padding: 14px 16px;
+  margin: 0 0 0.9em;
+  background: #f1ecdd;
+  border: 1px solid #d8d0bd;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+body.style-newspaper .markdown-body pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+/* 表格：报纸式——横线为主，无竖线，表头黑体双线 */
+body.style-newspaper .markdown-body table {
+  border-collapse: collapse;
+  margin: 0 0 0.9em;
+  font-size: 0.95em;
+}
+
+body.style-newspaper .markdown-body th,
+body.style-newspaper .markdown-body td {
+  border-top: 1px solid #b0a68c;
+  border-bottom: 1px solid #b0a68c;
+  padding: 6px 13px;
+}
+
+body.style-newspaper .markdown-body th {
+  font-family: "SimHei", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-weight: 700;
+  border-top: 3px double #1a1a1a;
+  border-bottom: 1px solid #1a1a1a;
+}
+
+/* 图片与分割线 */
+body.style-newspaper .markdown-body img { max-width: 100%; }
+
+body.style-newspaper .markdown-body hr {
+  border: none;
+  border-top: 1px solid #8c8c8c;
+  margin: 2em 0;
+}
+
+
+/* ---- 代码语法高亮（highlight.js token 配色，油墨色系） ---- */
+
+body.style-newspaper .markdown-body .hljs-keyword,
+body.style-newspaper .markdown-body .hljs-selector-tag,
+body.style-newspaper .markdown-body .hljs-literal,
+body.style-newspaper .markdown-body .hljs-section,
+body.style-newspaper .markdown-body .hljs-doctag {
+  color: #8b1a1a;
+}
+
+body.style-newspaper .markdown-body .hljs-string,
+body.style-newspaper .markdown-body .hljs-regexp,
+body.style-newspaper .markdown-body .hljs-addition,
+body.style-newspaper .markdown-body .hljs-attribute,
+body.style-newspaper .markdown-body .hljs-template-variable {
+  color: #2f5d50;
+}
+
+body.style-newspaper .markdown-body .hljs-number,
+body.style-newspaper .markdown-body .hljs-symbol,
+body.style-newspaper .markdown-body .hljs-bullet,
+body.style-newspaper .markdown-body .hljs-link {
+  color: #4a3f8f;
+}
+
+body.style-newspaper .markdown-body .hljs-title,
+body.style-newspaper .markdown-body .hljs-title.function_,
+body.style-newspaper .markdown-body .hljs-title.class_,
+body.style-newspaper .markdown-body .hljs-title.class_.inherited__,
+body.style-newspaper .markdown-body .hljs-function .title {
+  color: #7a4a1f;
+}
+
+body.style-newspaper .markdown-body .hljs-comment,
+body.style-newspaper .markdown-body .hljs-quote,
+body.style-newspaper .markdown-body .hljs-deletion,
+body.style-newspaper .markdown-body .hljs-meta {
+  color: #8c8577;
+}
+
+body.style-newspaper .markdown-body .hljs-variable,
+body.style-newspaper .markdown-body .hljs-type,
+body.style-newspaper .markdown-body .hljs-params,
+body.style-newspaper .markdown-body .hljs-built_in,
+body.style-newspaper .markdown-body .hljs-attr,
+body.style-newspaper .markdown-body .hljs-selector-attr,
+body.style-newspaper .markdown-body .hljs-selector-id,
+body.style-newspaper .markdown-body .hljs-selector-class,
+body.style-newspaper .markdown-body .hljs-name,
+body.style-newspaper .markdown-body .hljs-tag,
+body.style-newspaper .markdown-body .hljs-subst {
+  color: #a05a00;
+}

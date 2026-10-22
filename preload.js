@@ -27,8 +27,10 @@ contextBridge.exposeInMainWorld('tot', {
   onOpenFileError: (cb) => ipcRenderer.on('open-file-error', (_e, data) => cb(data)),
   // 主进程菜单命令（保存）
   onMenuCommand: (cb) => ipcRenderer.on('menu-command', (_e, cmd) => cb(cmd)),
-  // 顶栏「撤销」按钮：与编辑菜单「撤销」同款原生撤销（作用于当前焦点编辑区）
+  // 顶栏「撤销」按钮：编辑区内走原生撤销（作用于当前焦点编辑区）
   undo: () => ipcRenderer.send('web-undo'),
+  // 原生重做（编辑区内 Ctrl+Shift+Z / Ctrl+Y）
+  redo: () => ipcRenderer.send('web-redo'),
   // 插入图片：系统文件选择器 → 返回相对当前文档路径的相对路径
   selectImage: (docPath) => ipcRenderer.invoke('select-image', docPath),
   // 原生菜单栏明暗跟随渲染风格
