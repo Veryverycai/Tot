@@ -242,7 +242,8 @@ md-browser/
 - 构建：`electron-builder --config.electronDist=node_modules/electron/dist --publish never`（npm 脚本走 npx.ps1 被执行策略拦，改用 `node_modules\.bin\electron-builder.cmd`）
 - 产物：Tot 1.2.6.exe（便携，112,736,334 B）、Tot Setup 1.2.6.exe（安装，113,017,667 B）+ blockmap（119,449 B）、latest.yml（version 1.2.6）；旧 1.2.5 安装产物与 1.2.4 便携已删（1.2.5 便携被运行中旧版占用，保留）
 - 冒烟：win-unpacked 窗口标题 Tot 1.2.6 / VersionInfo 1.2.6（ProductVersion 1.2.6.0）、主进程 + 3 子进程、进程树杀净、隔离 userData 已清理
-- 本轮打包与发布同轮
+- 发布：commit 0933be8 + tag v1.2.6；git 协议仍不可用，用 gh token 走 Git Data API 重放（blob 从对象库 cat-file 取，避免工作区 CRLF 差异；message 保留结尾换行）（SHA 与本地一致）；main / tag 均指向 0933be8
+- Release：[Tot 1.2.6](https://github.com/Veryverycai/Tot/releases/tag/v1.2.6)（`gh release create` + `gh release upload`；资产 Tot.1.2.6.exe 112,736,334 B / Tot.Setup.1.2.6.exe 113,017,667 B，与本地字节一致；Latest 已指向 v1.2.6）
 
 ## 已知限制（1.1）
 
