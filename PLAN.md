@@ -259,6 +259,8 @@ md-browser/
 - 构建：`electron-builder --config.electronDist=node_modules/electron/dist --publish never`（target = nsis + portable + zip）
 - 产物：Tot 1.2.7.exe（便携，112,736,300 B）、Tot Setup 1.2.7.exe（安装，113,017,638 B）、Tot-1.2.7-win.zip（绿色，154,705,768 B）+ blockmap（119,520 B）、latest.yml（version 1.2.7）；旧 1.2.5/1.2.6 产物已删
 - 冒烟：win-unpacked VersionInfo 1.2.7（ProductVersion 1.2.7.0）、窗口标题 Tot 1.2.7、主进程 + 3 子进程、进程树杀净；打包版二次双击（argv 转发）两个标签 a.md / b.md 且当前 h1 为 B
+- 发布：commit 60b421b + tag v1.2.7；Git Data API 重放（SHA 与本地一致），main / tag 均指向 60b421b
+- Release：[Tot 1.2.7](https://github.com/Veryverycai/Tot/releases/tag/v1.2.7)（资产 Tot.1.2.7.exe 112,736,300 B / Tot.Setup.1.2.7.exe 113,017,638 B / Tot-1.2.7-win.zip 154,705,768 B，与本地字节一致；Latest 已指向 v1.2.7）
 
 ## 已知限制（1.1）
 
