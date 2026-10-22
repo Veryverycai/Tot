@@ -245,6 +245,21 @@ md-browser/
 - 发布：commit 0933be8 + tag v1.2.6；git 协议仍不可用，用 gh token 走 Git Data API 重放（blob 从对象库 cat-file 取，避免工作区 CRLF 差异；message 保留结尾换行）（SHA 与本地一致）；main / tag 均指向 0933be8
 - Release：[Tot 1.2.6](https://github.com/Veryverycai/Tot/releases/tag/v1.2.6)（`gh release create` + `gh release upload`；资产 Tot.1.2.6.exe 112,736,334 B / Tot.Setup.1.2.6.exe 113,017,667 B，与本地字节一致；Latest 已指向 v1.2.6）
 
+## 1.2.7 修复（已运行实例再双击文件打开慢）
+
+- 现象：单独双击 md 打开约 2 秒；已有文档时再双击另一个 md 要 5 秒以上
+- 实测归因（同一 md、隔离 userData）：主实例收到 second-instance → 渲染完成仅 **15 ms**；第二个进程在解压版/安装版下总耗时 **1,020 ms**（Electron 启动 + 转发 + 退出）；而单文件便携版（portable stub）第二次启动需 **14,112 ms**——每次双击都把整个应用（113 MB）重新解压到临时目录，与已开文档无关
+- 结论：应用内打开链路无瓶颈；慢在便携单文件格式本身，应用代码无法消除
+- 修复：①second-instance 改为先恢复/最小化还原/前置窗口，再打开文件（双击后立即看到窗口响应）；②win.target 增加 zip（绿色版：解压一次后运行 Tot.exe，二次双击约 1 秒）；③README 下载区说明两个版本的差异与推荐（频繁双击用安装版）
+- 验证：TOT_ARGV_HOLD 二次双击后两个标签均在且当前显示文件 B；zip 解压后第二次启动 1,020 ms、窗口标题 Tot 1.2.6、进程树杀净；node --check 通过
+- 版本号 1.2.6 → 1.2.7（package.json；README 下载项同步为安装版 / 绿色版 zip / 便携版）
+
+### 打包轮（1.2.7）
+
+- 构建：`electron-builder --config.electronDist=node_modules/electron/dist --publish never`（target = nsis + portable + zip）
+- 产物：Tot 1.2.7.exe（便携，112,736,300 B）、Tot Setup 1.2.7.exe（安装，113,017,638 B）、Tot-1.2.7-win.zip（绿色，154,705,768 B）+ blockmap（119,520 B）、latest.yml（version 1.2.7）；旧 1.2.5/1.2.6 产物已删
+- 冒烟：win-unpacked VersionInfo 1.2.7（ProductVersion 1.2.7.0）、窗口标题 Tot 1.2.7、主进程 + 3 子进程、进程树杀净；打包版二次双击（argv 转发）两个标签 a.md / b.md 且当前 h1 为 B
+
 ## 已知限制（1.1）
 
 - BOM 丢失：读文件按 utf8 解码，带 BOM 的 md 保存后 BOM 不保留（内容不变）

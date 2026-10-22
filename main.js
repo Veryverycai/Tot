@@ -1890,13 +1890,16 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', async (_e, argv) => {
+    // 先把窗口提到前台再打开文件：双击后立即可见窗口响应，不必等文件渲染
+    // （便携版第二个进程的解压/启动耗时在应用外，无法在这里消除）
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
     for (const p of pendingMdPaths(argv)) {
       if (winReady && win) await openByPath(p);
       else startupMdPaths.push(p);
-    }
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
     }
     if (process.env.TOT_ARGV_HOLD) {
       // 文件关联二次双击验证：断言转交过来的文件已打开
