@@ -1,38 +1,14 @@
 {
   "name": "tot",
   "productName": "Tot",
-  "version": "1.2.7",
+  "version": "1.3.0",
   "description": "Tot — Trail of Tears：本地 Markdown 文件浏览器",
   "author": "Tot",
-  "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder"
+    "start": "tauri dev",
+    "dist": "tauri build"
   },
   "devDependencies": {
-    "electron": "44.7.2",
-    "electron-builder": "26.15.3"
-  },
-  "build": {
-    "appId": "com.tot.browser",
-    "productName": "Tot",
-    "files": [
-      "main.js",
-      "preload.js",
-      "renderer/**/*",
-      "lib/**/*",
-      "icon.ico"
-    ],
-    "win": {
-      "target": [
-        "nsis",
-        "portable",
-        "zip"
-      ],
-      "icon": "icon.ico"
-    },
-    "nsis": {
-      "include": "build/installer.nsh"
-    }
+    "@tauri-apps/cli": "^2"
   }
 }

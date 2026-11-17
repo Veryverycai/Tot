@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tot",
+  "version": "1.3.0",
+  "identifier": "com.tot.browser",
+  "build": {
+    "frontendDist": "../renderer"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' http://mdfile.localhost data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "description": "Markdown 文档",
+        "role": "Editor"
+      }
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "nsis-hooks.nsh"
+      }
+    }
+  }
+}

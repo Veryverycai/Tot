@@ -41,7 +41,7 @@ function activeScroll() {
 // ---------- 风格切换 ----------
 
 // 风格注册表：每个 id 对应一个 body class + 若干 css 文件（link 惰性创建）
-// dark 标记驱动原生菜单栏明暗（Windows 菜单栏随应用深色模式着色）
+// dark 标记驱动标题栏与自绘菜单栏明暗（随应用深色模式着色）
 const STYLES = [
   { id: 'github-light', group: 'GitHub', label: 'GitHub 亮', dark: false, files: ['../lib/github-markdown-light.css', 'styles/github-light.css', 'styles/callouts.css', 'styles/mermaid.css'] },
   { id: 'github-dark', group: 'GitHub', label: 'GitHub 暗', dark: true, files: ['../lib/github-markdown-dark.css', 'styles/github-dark.css', 'styles/callouts-dark.css', 'styles/shell-github-dark.css', 'styles/mermaid-dark.css'] },
@@ -66,7 +66,7 @@ function normStyle(v) {
   return LEGACY_STYLES[v] || 'github-light';
 }
 
-// 惰性创建每个风格对应的 <link data-style-id>（CSP style-src file: 允许）
+// 惰性创建每个风格对应的 <link data-style-id>（CSP style-src 'self' 允许）
 function ensureStyleLinks() {
   for (const s of STYLES) {
     for (const file of s.files) {
@@ -98,7 +98,7 @@ function applyStyle(id) {
   document.body.className = `style-${id}`;
   $('#style-select').value = id;
   localStorage.setItem('tot-style', id);
-  // 原生菜单栏明暗跟随渲染风格
+  // 标题栏明暗跟随渲染风格（自绘菜单栏明暗由 body 风格类直接驱动）
   window.tot.setTheme(STYLES.find((s) => s.id === id).dark);
   reThemeMermaids(); // 不 await：后台按新明暗主题重渲染图表
 }
@@ -458,6 +458,7 @@ function updateTabbar() {
     el.addEventListener('click', () => { activateTab(t); });
     bar.append(el);
   }
+  updateReplaceUI();
 }
 
 function restoreTreeActive() {
@@ -1531,6 +1532,93 @@ function closeSearch() {
   $('#search-input').value = '';
   $('#search-count').textContent = '';
   $('#search-input').blur();
+  setReplacePanel(false);
+}
+
+// ---------- 文档内批量替换 ----------
+
+// 替换行默认收起：⇄ 或 Ctrl+H 展开，保持搜索条简洁
+function replacePanelOpen() {
+  return !$('#replace-group').hidden;
+}
+
+function setReplacePanel(open) {
+  $('#replace-group').hidden = !open;
+  $('#searchbar').classList.toggle('replace-open', open);
+  const toggle = $('#search-toggle-replace');
+  toggle.classList.toggle('active', open);
+  toggle.setAttribute('aria-pressed', String(open));
+  updateReplaceUI();
+}
+
+function updateReplaceUI() {
+  $('#replace-all').disabled = !activeTab || !$('#search-input').value;
+}
+
+function toggleReplacePanel() {
+  if (replacePanelOpen()) {
+    setReplacePanel(false);
+    $('#search-input').focus();
+    return;
+  }
+  if (!activeTab) { showStatus('没有打开的文档', true); return; }
+  setReplacePanel(true);
+  // 查询为空时先让用户输入查找词；已有查询则直接改替换词
+  if ($('#search-input').value) {
+    $('#replace-input').focus();
+    $('#replace-input').select();
+  } else {
+    $('#search-input').focus();
+  }
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// 全部替换：按源文匹配（大小写不敏感，与查找一致），一次替换当前文档全部命中。
+// 只改内存 + 标脏，Ctrl+S 才落盘；替换前压入文档级撤销栈，Ctrl+Z 可整步回退
+async function replaceAllMatches() {
+  const tab = activeTab;
+  if (!tab) { showStatus('没有打开的文档', true); return; }
+  const query = $('#search-input').value;
+  if (!query) {
+    showStatus('请先输入查找内容', true);
+    $('#search-input').focus();
+    return;
+  }
+  flushBlockEdit();   // 未取消的块编辑先落回源文，替换基于最新文本
+  flushDiagramEdit();
+  const replacement = $('#replace-input').value;
+  let count = 0;
+  const before = tab.text;
+  // 用回调返回替换文本：替换词里的 $& / $1 等按字面量处理，不当作替换模式
+  const after = before.replace(new RegExp(escapeRegExp(query), 'gi'), () => {
+    count++;
+    return replacement;
+  });
+  if (!count) {
+    // 查找高亮基于渲染文本，可跨加粗/代码 span 边界；替换基于源文，跨格式的命中在源文里不连续
+    const renderedOnly = searchState.query && searchState.query.toLowerCase() === query.toLowerCase() && searchState.matches.length;
+    showStatus(renderedOnly
+      ? '高亮匹配跨越了 Markdown 格式，源文中没有连续匹配，无法批量替换'
+      : '没有找到可替换的匹配', true);
+    return;
+  }
+  if (after === before) {
+    showStatus(`匹配 ${count} 处，替换内容与原文相同`);
+    return;
+  }
+  pushUndo(tab, before);
+  setTabText(tab, after);
+  await renderMarkdown(activeViewer(), tab.text, tab.path);
+  rebuildOutline();
+  updateReplaceUI();
+  // 替换是提交动作：退出搜索/替换输入框，紧接着的 Ctrl+Z 才走文档级撤销
+  if (document.activeElement === $('#search-input') || document.activeElement === $('#replace-input')) {
+    document.activeElement.blur();
+  }
+  showStatus(`已替换 ${count} 处（Ctrl+S 保存）`);
 }
 
 // 移除所有搜索高亮，还原文本节点
@@ -1629,6 +1717,7 @@ $('#search-input').addEventListener('input', () => {
   searchState.query = $('#search-input').value;
   searchState.current = 0;
   applySearch();
+  updateReplaceUI();
 });
 
 $('#search-input').addEventListener('keydown', (e) => {
@@ -1642,6 +1731,15 @@ $('#search-input').addEventListener('keydown', (e) => {
 $('#search-next').addEventListener('click', () => moveSearch(1));
 $('#search-prev').addEventListener('click', () => moveSearch(-1));
 $('#search-close').addEventListener('click', closeSearch);
+$('#search-toggle-replace').addEventListener('click', toggleReplacePanel);
+$('#replace-all').addEventListener('click', replaceAllMatches);
+$('#replace-input').addEventListener('keydown', (e) => {
+  // 回车直接全部替换；输入法选字回车不触发
+  if (e.key === 'Enter' && !e.isComposing) {
+    e.preventDefault();
+    replaceAllMatches();
+  }
+});
 
 // ---------- 面板折叠 / 侧栏宽度拖拽 / 尺寸持久化 ----------
 
@@ -1713,25 +1811,23 @@ $('#sidebar-resizer').addEventListener('pointerdown', (e) => startDrag(e));
 
 // ---------- 拖入文件打开 ----------
 
-// 拦截默认行为：Chromium 默认把窗口导航到被拖的文件（顶掉整个应用界面），
-// 这里改成把 .md 文件路径交给主进程走「打开文件」全流程（放行目录 + 最近打开 + 打开标签页）
+// Tauri 壳的原生 drag-drop 自带真实路径，在 Rust 侧过滤 .md 后走「打开文件」全流程
+// （放行目录 + 最近打开 + 打开标签页）；这里只拦截默认行为防窗口被导航到被拖文件
 document.addEventListener('dragover', (e) => e.preventDefault());
-document.addEventListener('drop', (e) => {
-  e.preventDefault();
-  for (const f of e.dataTransfer.files) {
-    let p = '';
-    try { p = window.tot.getPathForFile(f); } catch {}
-    if (p) window.tot.openDropped(p);
-  }
-});
+document.addEventListener('drop', (e) => e.preventDefault());
 
-// ---------- 全局快捷键（渲染层只处理无菜单冲突的键；Ctrl+S/O 走主进程菜单） ----------
+// ---------- 全局快捷键（Ctrl+S/O/R 等菜单快捷键在 menu.js；这里处理无菜单冲突的键） ----------
 
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'f') {
     e.preventDefault();
     openSearch();
+  } else if (mod && e.key.toLowerCase() === 'h' && !e.isComposing &&
+    (document.activeElement === $('#search-input') || document.activeElement === $('#replace-input') || !editorFocus())) {
+    // Ctrl+H 展开 / 收起替换行（焦点在搜索框内时也生效；编辑区内不拦截）
+    e.preventDefault();
+    toggleReplacePanel();
   } else if (mod && e.key === 'Tab') {
     if (tabs.length < 2) return;
     e.preventDefault();

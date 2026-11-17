@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "description": "Tot 主窗口权限：事件监听 + 剪贴板读取（粘贴菜单项）；文件对话框在 Rust 侧调用",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "clipboard-manager:allow-read-text"
+  ]
+}

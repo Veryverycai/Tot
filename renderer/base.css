@@ -71,7 +71,40 @@ body {
   color: inherit;
 }
 
+/* 展开替换行时收紧查找输入，顶栏不被撑出横向溢出 */
+#searchbar.replace-open #search-input { width: 130px; }
+
 #search-count { font-size: 12px; color: #8c959f; min-width: 34px; text-align: center; }
+
+/* 批量替换：⇄ 展开「替换为 + 全部替换」，默认隐藏保持搜索条简洁 */
+#searchbar #search-toggle-replace.active { background: #ddf4ff; color: #0969da; }
+
+#replace-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#replace-input {
+  border: none;
+  border-left: 1px solid #d1d9e0;
+  outline: none;
+  font: inherit;
+  width: 140px;
+  padding-left: 8px;
+  background: transparent;
+  color: inherit;
+}
+
+#searchbar #replace-all {
+  border: 1px solid #d1d9e0;
+  background: #f6f8fa;
+  white-space: nowrap;
+}
+
+#searchbar #replace-all:hover:not(:disabled) { background: #eaeef2; }
+#searchbar #replace-all:disabled { opacity: 0.5; cursor: default; }
+#searchbar #replace-all:disabled:hover { background: #f6f8fa; }
 
 #searchbar button {
   border: none;

@@ -1,0 +1,177 @@
+/* ===== 自绘菜单栏 + 模态弹层（Tauri 壳无原生菜单） =====
+   配色走 CSS 变量：亮色默认值 + 7 套暗色风格覆盖（与各风格外壳 #topbar 同色系），
+   明暗随 body.style-* 类切换，暗色无亮色残块 */
+
+:root {
+  --mb-bg: #f6f8fa;
+  --mb-fg: #1f2328;
+  --mb-border: #d1d9e0;
+  --mb-hover: #eaeef2;
+  --mb-popup-bg: #ffffff;
+  --mb-disabled: #8c959f;
+}
+
+body.style-github-dark {
+  --mb-bg: #161b22; --mb-fg: #e6edf3; --mb-border: #30363d;
+  --mb-hover: #30363d; --mb-popup-bg: #21262d; --mb-disabled: #8b949e;
+}
+
+body.style-notion-dark {
+  --mb-bg: #202020; --mb-fg: #d4d4d4; --mb-border: #303030;
+  --mb-hover: #333333; --mb-popup-bg: #2a2a2a; --mb-disabled: #808080;
+}
+
+body.style-typora-night {
+  --mb-bg: #2f3337; --mb-fg: #b8bfc6; --mb-border: #4c5258;
+  --mb-hover: #4c5258; --mb-popup-bg: #424b54; --mb-disabled: #8a9199;
+}
+
+body.style-obsidian {
+  --mb-bg: #252526; --mb-fg: #dcddde; --mb-border: #333333;
+  --mb-hover: #37373d; --mb-popup-bg: #2d2d2d; --mb-disabled: #808080;
+}
+
+body.style-dracula {
+  --mb-bg: #21222c; --mb-fg: #f8f8f2; --mb-border: #44475a;
+  --mb-hover: #44475a; --mb-popup-bg: #282a36; --mb-disabled: #6272a4;
+}
+
+body.style-nord {
+  --mb-bg: #3b4252; --mb-fg: #d8dee9; --mb-border: #4c566a;
+  --mb-hover: #434c5e; --mb-popup-bg: #2e3440; --mb-disabled: #7b88a1;
+}
+
+body.style-monokai {
+  --mb-bg: #23241f; --mb-fg: #f8f8f2; --mb-border: #49483e;
+  --mb-hover: #3e3d32; --mb-popup-bg: #272822; --mb-disabled: #75715e;
+}
+
+/* ---- 菜单栏 ---- */
+
+#menubar {
+  flex: none;
+  height: 30px;
+  display: flex;
+  align-items: stretch;
+  padding: 0 6px;
+  background: var(--mb-bg);
+  color: var(--mb-fg);
+  border-bottom: 1px solid var(--mb-border);
+  user-select: none;
+  position: relative;
+  z-index: 30;
+}
+
+.menu { position: relative; display: flex; }
+
+.menu-title {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  padding: 0 10px;
+  margin: 3px 0;
+  border-radius: 4px;
+  cursor: default;
+}
+
+.menu-title:hover,
+.menu.open .menu-title { background: var(--mb-hover); }
+
+.menu-popup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 210px;
+  background: var(--mb-popup-bg);
+  border: 1px solid var(--mb-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: none;
+  z-index: 40;
+}
+
+.menu.open > .menu-popup { display: block; }
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: default;
+  white-space: nowrap;
+  position: relative;
+  color: var(--mb-fg);
+}
+
+.menu-item > span:first-child { flex: 1; }
+
+.menu-item:not(.disabled):hover { background: var(--mb-hover); }
+
+.menu-item.disabled { color: var(--mb-disabled); }
+
+.menu-item .acc { color: var(--mb-disabled); font-size: 12px; }
+
+.menu-item .sub-arrow { color: var(--mb-disabled); font-size: 11px; }
+
+.menu-sep { height: 1px; margin: 4px 8px; background: var(--mb-border); }
+
+/* 「最近打开」子菜单：悬停向右展开 */
+.sub-popup { top: -5px; left: 100%; min-width: 180px; }
+
+.menu-item.sub-open > .sub-popup { display: block; }
+
+.menu-item.sub-open { background: var(--mb-hover); }
+
+/* ---- 模态弹层（关于 Tot / MIT 许可协议） ---- */
+
+#modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+#modal-box {
+  background: var(--mb-popup-bg);
+  color: var(--mb-fg);
+  border: 1px solid var(--mb-border);
+  border-radius: 10px;
+  padding: 18px 22px;
+  width: min(560px, 90vw);
+  max-height: 74vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+}
+
+#modal-title { font-weight: 600; font-size: 15px; }
+
+#modal-body {
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: 12px/1.7 Consolas, "Courier New", monospace;
+  max-height: 52vh;
+}
+
+#modal-close {
+  align-self: flex-end;
+  padding: 5px 18px;
+  border: 1px solid var(--mb-border);
+  border-radius: 6px;
+  background: var(--mb-bg);
+  color: var(--mb-fg);
+  cursor: pointer;
+  font: inherit;
+}
+
+#modal-close:hover { background: var(--mb-hover); }

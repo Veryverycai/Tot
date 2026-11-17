@@ -2,17 +2,16 @@
 
 一个简洁的 Windows 桌面 Markdown 浏览器：从「我的电脑」出发浏览任意目录里的 `.md` 文件，编辑、搜索、13 套渲染风格一键切换。
 
-Electron + 原生 JavaScript，无前端框架、无构建工具，离线可用。
+Tauri 2（Rust + 系统 WebView2）+ 原生 JavaScript，无前端框架、无构建工具，离线可用。
 
 ## 下载
 
 最新版本：[Releases](https://github.com/Veryverycai/Tot/releases)
 
-- **Tot Setup 1.2.7.exe** — 安装版（升级安装自动结束旧版并卸载）；**频繁双击 .md 打开建议用这个**
-- **Tot-1.2.7-win.zip** — 绿色版：解压一次后运行 `Tot.exe`，不写注册表；二次双击约 1 秒
-- **Tot 1.2.7.exe** — 单文件便携版，双击即用无需安装；每次启动都要自解压约 113 MB，打开较慢（约 5～15 秒），适合偶尔拷到别的机器用
+- **Tot.Setup.1.3.0.exe** — 安装版（约 2.7 MB；升级安装自动结束旧版并卸载，含旧 Electron 版）；**频繁双击 .md 打开建议用这个**
+- **Tot.1.3.0.exe** — 便携单文件（约 5 MB），双击即用无需安装、无需解压（全部资源内嵌），适合拷到别的机器用
 
-> 便携单文件版启动时会把整个应用解压到临时目录，已有文档时再双击另一个文件也要再解压一次；安装版与绿色版没有这个开销（二次双击约 1 秒）。
+> 1.3.0 起从 Electron 迁移到 Tauri 2：安装包从约 113 MB 降到约 2.7 MB，功能与界面完全一致。运行依赖 WebView2 运行时（Windows 11 自带；Windows 10 缺失时安装版会自动下载安装，便携版需先装好）。
 
 ## 功能
 
@@ -22,11 +21,12 @@ Electron + 原生 JavaScript，无前端框架、无构建工具，离线可用�
 - **预览即编辑**：应用只有预览一个界面——点击文本块直接富文本就地编辑、点击代码围栏或图表在图框内改源码（图表 300ms 实时预览）；文本块工具条：加粗/斜体/删除线/行内代码/清除格式、标题 h1-h6、列表与引用块互转、行内链接、插入图片；顶栏「保存」旁带「撤销」按钮：编辑中逐字撤销，退出编辑后 Ctrl+Z / 顶栏撤销 / 编辑菜单撤销可整块回退并可重做（撤销只改内存，Ctrl+S 或顶栏「保存」才落盘）；点块外任意空白即应用退出，进编辑不改内容退出不写回、不标脏；应用后按 GFM 回写源文，保存按原文件换行风格（CRLF/LF）还原（Windows 换行文件不再出现块区间错位/串块）
 - **Mermaid 图表**：全部图型渲染；点击图表就地编辑源码，语法错误显示错误态（仍可点击修复）
 - **文件内查找**：顶栏搜索条直接输入，高亮全部匹配、计数、上下跳转（跨加粗/代码高亮边界也能匹配，跨边界的命中按一个完整命中计数与跳转）；Ctrl+F 聚焦、Esc 清除；中文输入法选字回车不受影响
+- **批量替换**：搜索条右侧 ⇄（Ctrl+H）展开「替换为」，点「全部替换」或回车一次替换当前文档里的全部匹配（大小写不敏感，与查找一致）；替换只改内存并标脏，Ctrl+Z / 顶栏撤销可整步回退，Ctrl+S 或保存按钮才落盘；替换词里的 `$` 按字面量处理
 - **大纲**：按标题层级生成，点击跳转，滚动时自动高亮当前章节
 - **13 套渲染风格**：GitHub 亮/暗、极简、Read the Docs、Notion 亮/暗、Typora White/Night、Obsidian、报纸、Dracula、Nord、Monokai；选择自动记住，菜单栏明暗跟随风格
 - **代码语法高亮**：highlight.js（常见 30+ 语言），每套风格独立配色
 - **Callout 标注块**：`> [!NOTE]` / `[!TIP]` / `[!IMPORTANT]` / `[!WARNING]` / `[!CAUTION]`
-- **本地图片**：md 内相对路径图片正常显示（`mdfile://` 协议，路径限制在已浏览的目录内）
+- **本地图片**：md 内相对路径图片正常显示（自定义 mdfile 协议，路径限制在已浏览的目录内）
 - **最近打开**：文件菜单下的「最近打开」索引最近三个文件，点击即在树中定位并打开
 - **双击打开**：Windows 设置里把 .md 关联到 Tot 后，双击 .md 文件直接打开（已运行时自动转到现有窗口）；启动不预载 5.5 MB 图库，冷启动首屏更快
 - **拖入打开**：把 .md 文件直接拖进窗口打开，可一次拖入多个
@@ -41,18 +41,30 @@ Electron + 原生 JavaScript，无前端框架、无构建工具，离线可用�
 | 保存 | 菜单 文件 → 保存 / Ctrl+S / 顶栏保存按钮 |
 | 就地编辑 | 点击文本块 / 图表 / 代码块；点块外空白或工具条「应用」结束，Esc 取消；退出后 Ctrl+Z 整块撤销、Ctrl+Y（或 Ctrl+Shift+Z）重做，编辑中 Ctrl+Z 逐字撤销 |
 | 查找 | 顶栏搜索条（Ctrl+F 聚焦，Esc 清除） |
+| 批量替换 | 顶栏搜索条 ⇄（Ctrl+H）→ 输入替换词 → 「全部替换」/ 回车（Ctrl+Z 撤销） |
 | 切换标签页 | Ctrl+Tab / Ctrl+Shift+Tab |
 | 恢复上次文件 | 启动时底部浮条点「恢复」；点「忽略」不再询问 |
 
 ## 开发
 
+环境要求：Node.js + Rust 工具链（MSVC）+ WebView2 运行时（Win11 自带）。
+
 ```bash
 npm install
-npm start        # 运行开发版
-npm run dist     # 打包（electron-builder：安装版 + 便携版）
+# 首次克隆需创建目录联接：Tauri 资产嵌入复用根 lib/（前端零改动；联接不随 git 传播）
+New-Item -ItemType Junction -Path renderer\lib -Target (Resolve-Path lib)
+npm start        # 运行开发版（tauri dev）
+npm run dist     # 打包（tauri build：NSIS 安装版 + 独立 exe）
 ```
 
-技术栈：Electron 44 + marked + highlight.js + mermaid + turndown + github-markdown-css（全部 vendored 在 `lib/`）。
+自动化验证（CDP 驱动，debug 构建默认开调试端口；release 需 TOT_CDP=1）：
+
+```bash
+node dev\verify.mjs   # 功能套件 71 项断言（默认对 debug exe，TOT_EXE 可覆盖）
+node dev\smoke.mjs    # 打包冒烟 7 项（单实例转发/最近打开被删/越界拒写，默认对 release exe）
+```
+
+技术栈：Tauri 2（Rust 壳层 + 系统 WebView2）+ marked + highlight.js + mermaid + turndown + github-markdown-css（全部 vendored 在 `lib/`）。
 
 ## 已知限制
 

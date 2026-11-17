@@ -1,0 +1,14 @@
+# dev watcher 忽略项（frontendDist 现为 ../renderer；资产嵌入不受此文件影响，由 codegen 全量递归 renderer/）
+node_modules
+dist
+build
+src-tauri
+.git
+.claude
+dev
+*.md
+package.json
+package-lock.json
+.gitignore
+LICENSE
+icon.ico

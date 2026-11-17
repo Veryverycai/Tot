@@ -1,3 +1,10 @@
 node_modules/
 dist/
 *.log
+src-tauri/target/
+# Tauri CLI 生成的 capabilities JSON Schema（构建时自动重建）
+src-tauri/gen/
+# Tauri 资产嵌入用的目录联接（renderer/lib → ../lib，walkdir 跟随链接）
+renderer/lib
+# 验证脚本运行时生成的测试文档（跑完自动还原，不入库）
+dev/fixtures/

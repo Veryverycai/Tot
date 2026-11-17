@@ -11,7 +11,7 @@
 1. 窗口标题 Tot + 版本号（清晰当前运行版本，随 package.json 自动）；顶栏无文字/无打开文件夹按钮；菜单栏 文件/编辑/视图/窗口（文件含打开文件 Ctrl+O、打开文件夹 Ctrl+Shift+O、保存 Ctrl+S；窗口含关于 Tot 与 MIT 许可协议）
 2. 多标签页：打开多个文件成 tab，开关切换滚动恢复、dirty 关闭确认、全部关闭回空态
 3. 编辑（预览即编辑，1.2.0 修订）：无「编辑/预览」切换与双栏——应用只有预览一个界面；点击文本块富文本所见即所得就地编辑（格式随改随显，应用后按 GFM 回写源文）、代码围栏与图表在图框内改源码（图表带实时预览）；Ctrl+S 或顶栏保存按钮落盘（active tab dirty 时可用，按原文件换行风格还原）；dirty 回显、越界路径拒写
-4. 搜索：Ctrl+F 文件内查找，高亮/计数/上下跳转，重渲染后自动重应用
+4. 搜索：Ctrl+F 文件内查找，高亮/计数/上下跳转，重渲染后自动重应用；Ctrl+H 展开替换行，「全部替换」一次替换当前文档全部匹配（大小写不敏感、可撤销、保存才落盘）
 5. 拖拽：文件夹导航与大纲框可拖动大小（sidebar 200–600px / outline 120–600px clamp）
 6. 重启自动恢复上次目录（userData/config.json）
 7. 12 套渲染风格切换生效 + localStorage 持久化 + 暗色外壳无亮色残块 + 代码块 highlight.js 语法高亮（每套风格独立 token 配色）+ Callout 标注块（`> [!NOTE]` 等 5 类）+ 代码块底色与风格背景对比明显
@@ -261,6 +261,61 @@ md-browser/
 - 冒烟：win-unpacked VersionInfo 1.2.7（ProductVersion 1.2.7.0）、窗口标题 Tot 1.2.7、主进程 + 3 子进程、进程树杀净；打包版二次双击（argv 转发）两个标签 a.md / b.md 且当前 h1 为 B
 - 发布：commit 60b421b + tag v1.2.7；Git Data API 重放（SHA 与本地一致），main / tag 均指向 60b421b
 - Release：[Tot 1.2.7](https://github.com/Veryverycai/Tot/releases/tag/v1.2.7)（资产 Tot.1.2.7.exe 112,736,300 B / Tot.Setup.1.2.7.exe 113,017,638 B / Tot-1.2.7-win.zip 154,705,768 B，与本地字节一致；Latest 已指向 v1.2.7）
+
+## 1.2.8 新功能（文档内批量替换）
+
+- 顶栏搜索条新增 ⇄ 开关（Ctrl+H 等价）：展开第二行「替换为 + 全部替换」，默认收起保持搜索条简洁；查询为空或无文档时「全部替换」禁用；Esc / × 清除查询时一并收起替换行（替换词保留）
+- 匹配与替换都在源文（tab.text）上做：字面量查找、大小写不敏感（RegExp `gi` + escapeRegExp，与查找一致）；替换词里的 `$&`/`$1` 用回调按字面量返回，不当作替换模式；替换只改内存并标脏，Ctrl+S / 顶栏保存才落盘
+- 可撤销：替换前调 flushBlockEdit/flushDiagramEdit 落回未应用编辑，再 pushUndo 压入当前 tab 的文档级快照；Ctrl+Z / 顶栏撤销整步回退，Ctrl+Y 重做（与块/图表编辑共用撤销栈）
+- 状态反馈：`已替换 N 处（Ctrl+S 保存）`；0 命中显示错误提示不改文本；匹配数不变（替换词与原文相同）时不标脏不压栈；替换后整页重渲染并重建大纲，applySearch 自动重算高亮（查询仍在时计数归零/更新）
+- 输入法：替换框回车带 isComposing 守卫，选字回车不会误触发全部替换
+- 验证：[dev:replace1-9] ①Ctrl+H 展开与按钮禁用态；②查询「测试」替换为「替换」——3 处命中、高亮 0、dirty、保存/撤销可用、状态文案；③撤销整步回原文且不脏；④Ctrl+Y 重做；⑤保存落盘（CRLF 保留）后不脏；⑥撤销保存前状态重新变脏且磁盘不动；⑦查询 test 命中源文 TEST（大小写不敏感）；⑧无匹配不改文本并错误提示；⑨fixture 还原零污染。node --check main.js / renderer/app.js 通过
+
+### 打包轮（1.2.8）
+
+- 版本号 1.2.7 → 1.2.8（package.json；README 下载项同步为 Tot 1.2.8.exe / Tot Setup 1.2.8.exe / Tot-1.2.8-win.zip）
+- 构建：`node node_modules/electron-builder/cli.js --config.electronDist=node_modules/electron/dist --publish never`（本地 Electron 发行目录，避开 GitHub 下载超时；target = nsis + portable + zip）
+- 产物：Tot 1.2.8.exe（便携，112,737,994 B）、Tot Setup 1.2.8.exe（安装，113,019,330 B）+ blockmap（119,620 B）、Tot-1.2.8-win.zip（绿色，154,708,005 B）、latest.yml（version 1.2.8）；旧 1.2.7 安装/便携/zip 产物已删（Tot-1.2.7-win 目录被运行中的旧版占用，保留）
+- 冒烟：win-unpacked VersionInfo 1.2.8（ProductVersion 1.2.8.0）、窗口标题 Tot 1.2.8、主进程 + 3 子进程；打包版 TOT_REPLACE 9 项全绿；进程树杀净
+- 本轮仅打包：未 commit / 未 tag / 未发布
+
+## 1.3.0 轻量化迁移（Electron → Tauri 2）
+
+目标：客户端轻量化，功能实现全部一致。安装体积 113 MB → 2.7 MB（-97.6%），独立 exe 约 5 MB。
+
+### 架构
+
+- **Tauri 2（Rust 壳层 + 系统 WebView2）** 替代 Electron；渲染层（app.js / 13 套 CSS / vendored lib / mermaid 懒加载 / marked 补丁）原样复用，零构建工具不变
+- `src-tauri/src/`：main.rs（建窗/启动序列/单实例/拖入/mdfile 协议）、core.rs（knownDirs 信任边界/扫描/中文排序/config 串行队列原子写/会话）、commands.rs（与旧 preload 白名单一一对应的命令）
+- `renderer/bridge.js`：以与旧 preload.js 完全相同的签名实现 window.tot（走 __TAURI_INTERNALS__ 原语，不引 @tauri-apps/api 打包链）；app.js 无需感知壳已更换（仅 drop 改走壳事件）
+- `renderer/menu.js` + `styles/menubar.css`：窗口内自绘菜单（文件/编辑/视图/窗口 + 最近打开子菜单 + 快捷键路由），替代 Electron 原生菜单；菜单栏明暗随风格
+- 图片协议：`http://mdfile.localhost/local/<路径>`（Windows 自定义 scheme 须经 http 包装）；CSP 由壳注入
+- 单实例：tauri-plugin-single-instance（互斥量按 identifier 全局唯一，不分 userData）——第二实例先聚焦首实例窗口再转交 argv；文件关联/拖入/最近打开共用 open_by_path
+- 启动防丢事件：StartupGate（tokio Notify）等 frontend_ready 再发 init-tree/argv/会话询问；2s 兜底 show
+- 图标：全套源自 MDicon_stroked.png（透明补边方形后 tauri icon 生成 ico/png/icns/Store/android/ios）
+
+### 关键决策
+
+- **资产嵌入**：tauri-codegen 用 walkdir 全量递归 frontendDist（.taurignore 只影响 dev watcher，不过滤资产）→ frontendDist 指向 ../renderer + `renderer/lib` 目录联接指向根 lib/（walkdir follow_links 跟随；页面 ../lib/x 解析为 /lib/x 恰好匹配资产 key）——index.html/app.js 零改动，Electron 版不受影响；联接不随 git 传播，README 开发节说明创建命令
+- **config 串行语义**：ConfigStore::update 在 tokio Mutex 队列锁内读-改-写 + tmp 写后 rename 原子写（对齐旧 recentQueue/configQueue，修复并发覆盖）
+- **CDP 调试端口**：WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 被 wry 覆盖 → WebviewWindowBuilder.additional_browser_args（debug 默认开；release 需 TOT_CDP，TOT_CDP_PORT 默认 9222）
+- **NSIS 升级钩子**（nsis-hooks.nsh，移植旧 build/installer.nsh）：taskkill 结束运行中的 Tot → 枚举 HKCU 卸载项静默卸载 DisplayName 以「Tot 」开头的旧 Electron 版（新版注册为「Tot」不带空格后缀，不会误卸自己；卸载后索引前移重新枚举）→ 若用户曾以「打开方式→Tot.exe」关联（UserChoice=Applications\Tot.exe，哈希保护不可改写），改写该 ProgId 的 command 为新装路径，升级后双击无缝切换；不劫持用户选的其他默认应用
+- 撤销/重做：编辑区内逐字撤销改 document.execCommand（WebView2 原生栈），文档级快照栈不变
+
+### 验证（dev/verify.mjs 71 项 + dev/smoke.mjs 7 项，debug 与 release 各一轮全绿）
+
+- 功能套件：树/渲染/图片协议/菜单 DOM/13 风格含菜单栏明暗/scrollspy/多标签/查找替换/就地编辑/文档级与逐字撤销/mermaid 懒加载错误态实时预览/面板互斥/拖拽 clamp 持久化/无改动不脏/CRLF/会话恢复忽略/argv
+- 打包冒烟：单实例转发（第二实例 exit 0 + 首实例开标签）、最近打开被删（出索引 + 状态栏提示）、越界拒写（拒绝 + 正向对照）
+- 断言层经验：物理鼠标 :hover 干扰样式断言（CDP moveMouse 移开）；contenteditable 不自动聚焦（断言须 p.focus()）；marked 合并相邻 strong；mermaid flowchart htmlLabels=foreignObject（HTML 命名空间，搜索不排除）vs sequenceDiagram 纯 SVG text（排除）；模板串内嵌页面 JS 单引号须 \\' 双转义
+
+### 打包轮（1.3.0）
+
+- 构建：`node_modules\.bin\tauri.cmd build`（release profile：opt-level=s / lto / codegen-units=1 / panic=abort / strip）
+- 产物：tot.exe（5,227,008 B ≈ 5 MB）、Tot_1.3.0_x64-setup.exe（2,806,912 B ≈ 2.7 MB）；VersionInfo 1.3.0；发布资产命名 Tot.1.3.0.exe（便携）/ Tot.Setup.1.3.0.exe（安装）
+- 升级链路实测：装旧 Electron 1.2.8（dist 旧安装包）并运行（4 进程）→ 静默升级 1.3.0：旧进程被杀、旧目录与注册表项被卸、控制面板单一 DisplayName=Tot 1.3.0；重装不误卸自己；Applications\Tot.exe command 改写为新路径；用户真实双击桌面 .md 经 UserChoice 启动新版并单实例转发 ✓
+- 安装二进制与 release 二进制仅差 3 字节 bundle-type 元数据（BUNDLE_TYPE_VAR_NSS/UNK），代码一致
+- 清理：删 main.js / preload.js / build/installer.nsh / 根 icon.ico；package.json 删 electron/electron-builder 与 build 字段（npm install 修剪 284 包）；README/PLAN 更新；.gitignore 补 src-tauri/target/、src-tauri/gen/、renderer/lib、dev/fixtures/
+- 已知限制补充：运行依赖 WebView2 运行时（Win11 自带；Win10 缺失时安装版自动下载安装）；单实例互斥量全局唯一（同 identifier 不分 userData，多开需不同 identifier）
 
 ## 已知限制（1.1）
 
